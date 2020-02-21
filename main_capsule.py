@@ -92,10 +92,9 @@ assert args.dataset in [
 
 config = getattr(configs, args.config).config
 
-train_batch_size = int(args.num_gpus * 128 / 8)
-test_batch_size = int(args.num_gpus * 100 / 8)
-
 if 'CIFAR' in args.dataset:
+    train_batch_size = int(args.num_gpus * 128 / 8)
+    test_batch_size = int(args.num_gpus * 100 / 8)
     transform_train = config['transform_train']
     transform_test = config['transform_test']
     train_set = getattr(torchvision.datasets,
@@ -134,23 +133,26 @@ elif args.dataset == 'MovingMNist':
                                               shuffle=False)
     image_dim_size = 64
 elif args.dataset == 'DiverseMultiMNist':
+    train_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
+    test_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
     image_dim_size = 36
     path = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps'
-    train_set = diverse_multi_mnist.DiverseMultiMNist(path,
-                                                      train=True,
-                                                      download=True)
-    train_loader = torch.utils.data.DataLoader(train_set,
-                                               batch_size=train_batch_size)
-    test_set = diverse_multi_mnist.DiverseMultiMNist(path,
-                                                     train=False,
-                                                     download=True)
-    test_loader = torch.utils.data.DataLoader(test_set,
-                                              batch_size=test_batch_size)
+    train_set = diverse_multi_mnist.DiverseMultiMNist(
+        path, train=True, download=True, batch_size=train_batch_size)
+    train_loader = torch.utils.data.DataLoader(
+        train_set, batch_size=train_batch_size, num_workers=args.num_workers)
+    test_set = diverse_multi_mnist.DiverseMultiMNist(
+        path, train=False, download=True, batch_size=test_batch_size)
+    test_loader = torch.utils.data.DataLoader(
+        test_set, batch_size=test_batch_size, num_workers=args.num_workers)
     loss_func = nn.BCEWithLogitsLoss()
     predicted_lambda = lambda v: (torch.sigmoid(v) > 0.5).type(v.dtype)
-    correct_lambda = lambda predicted, targets: predicted.eq(targets).sum().item()
-    total_lambda = lambda targets: np.prod(targets.shape)
+    # The paper specifies that it is an IFF condition, i.e. predicted equals
+    # targets iff they are the same everywhere.
+    correct_lambda = lambda predicted, targets: predicted.eq(targets).all(1).sum().item()
+    total_lambda = lambda targets: targets.size(0)
     num_targets_lambda = lambda targets: targets.eq(1).sum().item()
+
 print('==> Building model..')
 # Model parameters
 
@@ -187,11 +189,12 @@ total_params = count_parameters(net)
 print(total_params)
 
 results_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
-if not os.path.isdir('results') and not args.debug:
-    os.mkdir('results')
+if not os.path.isdir(results_dir) and not args.debug:
+    os.mkdir(results_dir)
+
+today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
+store_dir = os.path.join(results_dir, today)
 if not args.debug:
-    store_dir = os.path.join('results',
-                             datetime.today().strftime('%Y-%m-%d-%H-%M-%S'))
     os.mkdir(store_dir)
 
 net = net.to(device)
@@ -219,6 +222,9 @@ def train(epoch):
     total = 0
     num_targets_total = 0
     for batch_idx, (inputs, targets) in enumerate(train_loader):
+        if batch_idx == len(train_loader):
+            # This is dumb af.
+            break
         inputs = inputs.to(device)
 
         targets = targets.to(device)
@@ -261,9 +267,14 @@ def test(epoch):
     net.eval()
     test_loss = 0
     correct = 0
+    true_correct = 0
     total = 0
+    num_targets_total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
+            if batch_idx == len(test_loader):
+                # This is dumb af.
+                break
             inputs = inputs.to(device)
 
             targets = targets.to(device)
@@ -274,17 +285,26 @@ def test(epoch):
 
             test_loss += loss.item()
 
-            _, predicted = v.max(dim=1)
+            predicted = predicted_lambda(v)
 
-            total += targets.size(0)
+            num_total = total_lambda(targets)
+            num_targets = num_targets_lambda(targets)
+            total += num_total
+            num_targets_total += num_targets
 
-            correct += predicted.eq(targets).sum().item()
+            correct += correct_lambda(predicted, targets)
+            true_positive_count = (predicted.eq(targets) & targets.eq(1)).sum().item()
+            true_correct += true_positive_count
 
-            progress_bar(
-                batch_idx, len(test_loader),
-                'Loss: %.3f | Acc: %.3f%% (%d/%d)' %
-                (test_loss /
-                 (batch_idx + 1), 100. * correct / total, correct, total))
+            s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
+
+            progress_bar(batch_idx, len(test_loader), s % (
+                test_loss / (batch_idx + 1),
+                100. * correct / total, correct, total,
+                100. * true_correct / num_targets_total,
+                true_correct,
+                num_targets_total
+            ))
 
     # Save checkpoint.
     acc = 100. * correct / total
@@ -295,7 +315,8 @@ def test(epoch):
             'acc': acc,
             'epoch': epoch,
         }
-        torch.save(state, os.path.join(store_dir, 'ckpt.pth'))
+        if not args.debug:
+            torch.save(state, os.path.join(store_dir, 'ckpt.pth'))
         best_acc = acc
     return 100. * correct / total
 
@@ -311,15 +332,17 @@ results = {
 
 total_epochs = 350
 
+if not args.debug:
+    store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
+        str(args.dataset), str(args.num_routing), args.backbone)
+    store_file = os.path.join(store_dir, store_file)
+
 for epoch in range(start_epoch, start_epoch + total_epochs):
     results['train_acc'].append(train(epoch))
 
     lr_decay.step()
     results['test_acc'].append(test(epoch))
+    if not args.debug:
+        pickle.dump(results, open(store_file, 'wb'))
 # -
 
-if not args.debug:
-    store_file = os.path.join(store_dir, 'dataset_' + str(args.dataset) + '_num_routing_' + str(args.num_routing) + \
-                    '_backbone_' + args.backbone + '.dct')
-
-    pickle.dump(results, open(store_file, 'wb'))

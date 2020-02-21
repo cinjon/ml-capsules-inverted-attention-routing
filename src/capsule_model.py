@@ -132,6 +132,7 @@ class CapsModel(nn.Module):
 
         ## Primary Capsule Layer (a single CNN)
         u = self.pc_layer(c)
+        # dmm u.shape: [64, 1024, 8, 8]
         u = u.permute(0, 2, 3, 1)
         u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
                    self.pc_num_caps, self.pc_caps_dim)  # 100, 14, 14, 32, 16
@@ -146,6 +147,10 @@ class CapsModel(nn.Module):
             capsule_values, _val = [init_capsule_value], init_capsule_value
             for i in range(len(self.capsule_layers)):
                 _val = self.capsule_layers[i].forward(_val, 0)
+                # dmm:
+                # capsule 0 _val.shape: [64, 16, 6, 6, 64]
+                # capsule 1 _val.shape: [64, 10, 64]
+                # capsule 2 _val.shape: [64, 10, 64]
                 # get the capsule value for next layer
                 capsule_values.append(_val)
 
@@ -156,6 +161,10 @@ class CapsModel(nn.Module):
                 for i in range(len(self.capsule_layers)):
                     _val = self.capsule_layers[i].forward(
                         capsule_values[i], n, capsule_values[i + 1])
+                    # dmm:
+                    # capsule 0 _val.shape: [64, 16, 6, 6, 64]
+                    # capsule 1 _val.shape: [64, 10, 64]
+                    # capsule 2 _val.shape: [64, 10, 64]
                     _capsule_values.append(_val)
                 capsule_values = _capsule_values
         # sequential routing
@@ -172,9 +181,17 @@ class CapsModel(nn.Module):
                 capsule_values.append(_val)
 
         ## After Capsule
+        # dmm - capsule_values:
+        # [[64, 16, 8, 8, 64], [64, 16, 6, 6, 64], [64, 10, 64], [64, 10, 64]]
         out = capsule_values[-1]
+        # dmm - capsule_values:
+        # [[64, 16, 8, 8, 64], [64, 16, 6, 6, 64], [64, 10, 64], [64, 10, 64]]
         out = self.final_fc(out)  # fixed classifier for all capsules
+        # dmm - out.shape: 64, 10, 1
         out = out.squeeze()  # fixed classifier for all capsules
+        # dmm - out.shape: 64, 10
+
+        # They commented this out.
         #out = torch.einsum('bnd, nd->bn', out, self.final_fc) # different classifiers for distinct capsules
 
         return out

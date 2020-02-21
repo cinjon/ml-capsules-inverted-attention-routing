@@ -30,18 +30,20 @@ class DiverseMultiMNist(IterableDataset):
         '6 - six', '7 - seven', '8 - eight', '9 - nine'
     ]
 
-    def __init__(self, root, train=True, download=False):
+    def __init__(self, root, train=True, download=False, batch_size=None):
         super(DiverseMultiMNist, self).__init__()
         self.root = root
         self.train = train
         if download:
             self.download()
 
+        self._transforms = Compose([ToTensor(), Normalize((0.1307,), (0.3081,))])
+        self._batch_size = batch_size
+
         data_file = self.training_file if train else self.test_file
         self.data, self.targets = torch.load(
             os.path.join(self.processed_folder, data_file))
         self.num_images = len(self.data)
-        print('Number of images: ', self.num_images)
         data_by_label = defaultdict(list)
         for datum, target in zip(self.data, self.targets):
             data_by_label[target.item()].append(datum)
@@ -49,8 +51,6 @@ class DiverseMultiMNist(IterableDataset):
 
         del self.targets
         del self.data
-
-        self.transforms = Compose([ToTensor(), Normalize((0.1307,), (0.3081,))])
 
     @property
     def raw_folder(self):
@@ -107,7 +107,15 @@ class DiverseMultiMNist(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        print('Worker Info: ', worker_info)
+        if not worker_info:
+            self.my_data_indices = {k: list(range(len(v)))
+                                    for k, v in self.data_by_label.items()}
+        else:
+            per_worker = {k: int(len(v) / worker_info.num_workers)
+                          for k, v in self.data_by_label.items()}
+            my_id = worker_info.id
+            self.my_data_indices = {k: [v*my_id, v*(my_id + 1)]
+                                    for k, v in per_worker.items()}
         return self
 
     def __next__(self):
@@ -117,8 +125,12 @@ class DiverseMultiMNist(IterableDataset):
         """
         target1, target2 = np.random.choice(10, size=2, replace=False)
 
-        index1 = np.random.choice(len(self.data_by_label[target1]), size=1)[0]
-        index2 = np.random.choice(len(self.data_by_label[target2]), size=1)[0]
+        indices1 = self.my_data_indices[target1]
+        indices2 = self.my_data_indices[target2]
+
+        index1 = np.random.choice(list(range(*indices1)), size=1)[0]
+        index2 = np.random.choice(list(range(*indices2)), size=1)[0]
+
         img1 = self.data_by_label[target1][index1].numpy()
         img2 = self.data_by_label[target2][index2].numpy()
 
@@ -144,10 +156,10 @@ class DiverseMultiMNist(IterableDataset):
         target.scatter_(0, target_indices, 1.)
 
         img = Image.fromarray(img, mode='L')
-        img = self.transforms(img)
+        img = self._transforms(img)
         # Repeat so that we have a 3 channel RGB image.
         img = img.repeat(3, 1, 1)
         return img, target
 
     def __len__(self):
-        return self.num_images
+        return int(self.num_images / self._batch_size) + 1
