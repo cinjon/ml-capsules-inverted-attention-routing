@@ -17,7 +17,7 @@ import torchvision.transforms as transforms
 import configs
 from src.moving_mnist import MovingMNist, MovingMNist_collate
 from src import capsule_model, diverse_multi_mnist
-from utils import progress_bar
+# from utils import progress_bar
 
 # +
 parser = argparse.ArgumentParser(
@@ -43,7 +43,9 @@ parser.add_argument('--backbone',
                     type=str,
                     help='type of backbone. simple or resnet')
 parser.add_argument('--data_root',
-                    default='/misc/kcgscratch1/ChoGroup/resnick/vidcaps',
+                    default=('/misc/kcgscratch1/ChoGroup/resnick/'
+                             'spaceofmotion/zeping/capsules/'
+                             'ml-capsules-inverted-attention-routing/data'),
                     type=str,
                     help='root of where to put the data.')
 parser.add_argument('--num_workers',
@@ -75,6 +77,14 @@ parser.add_argument('--seed',
                     default=0,
                     type=int,
                     help='random seed')
+parser.add_argument('--epoch',
+                    default=350,
+                    type=int,
+                    help='number of epoch')
+parser.add_argument('--batch_size',
+                    default=8,
+                    type=int,
+                    help='number of batch size')
 # -
 
 args = parser.parse_args()
@@ -93,13 +103,12 @@ assert args.dataset in [
 config = getattr(configs, args.config).config
 
 if args.dataset == 'MovingMNist':
-    train_batch_size = 2
-    test_batch_size = 2
+    # train_batch_size = 128
+    # test_batch_size = 128
     image_dim_size = 64
 
     random.seed(args.seed)
-    # dataset = MovingMNIST(args.data_root, download=True)
-    dataset = MovingMNist("MovingMNIST", download=False)
+    dataset = MovingMNist(args.data_root, download=True)
     train_len = int(len(dataset) * 0.8)
     test_len = len(dataset) - train_len
     train_set, test_set = torch.utils.data.random_split(
@@ -107,13 +116,13 @@ if args.dataset == 'MovingMNist':
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
-        batch_size=train_batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         collate_fn=MovingMNist_collate)
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
-        batch_size=test_batch_size,
+        batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         collate_fn=MovingMNist_collate)
@@ -228,9 +237,8 @@ def train(epoch):
     #         num_targets_total
     #     ))
 
-        print("{} / {} | Loss: {:.3f}".format(
-            batch_idx, len(train_loader), train_loss / (batch_idx + 1)))
-        break
+        print("Epoch {} {} / {} | Loss: {:.5f}".format(
+            epoch, batch_idx, len(train_loader), train_loss/(batch_idx+1)))
 
     return train_loss # 100. * correct / total
 
@@ -278,9 +286,8 @@ def test(epoch):
             #     num_targets_total
             # ))
 
-            print("{} / {} | Loss: {:.3f}".format(
-                batch_idx, len(test_loader), test_loss / (batch_idx + 1)))
-            break
+            print("Epoch {} {} / {} | Loss: {:.5f}".format(
+                epoch, batch_idx, len(test_loader), test_loss/(batch_idx+1)))
 
     # Save checkpoint.
     # acc = 100. * correct / total
@@ -301,7 +308,7 @@ def test(epoch):
         "epoch": epoch
     }
     if not args.debug:
-        torch.save(statet, os.path.join(store_dir, "ckpt.pth"))
+        torch.save(state, os.path.join(store_dir, "ckpt.pth"))
 
     return test_loss # 100. * correct / total
 
@@ -315,7 +322,7 @@ results = {
     'test_loss': [],
 }
 
-total_epochs = 350
+total_epochs = args.epoch
 
 if not args.debug:
     store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
@@ -327,7 +334,7 @@ for epoch in range(start_epoch, start_epoch + total_epochs):
 
     lr_decay.step()
     results['test_loss'].append(test(epoch))
+    print("Epoch {} total test loss: {}".format(results['test_loss'][-1]))
     if not args.debug:
         pickle.dump(results, open(store_file, 'wb'))
-    break
 # -
