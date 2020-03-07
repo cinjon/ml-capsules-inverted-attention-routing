@@ -8,7 +8,43 @@ from torchvision.transforms import Compose, Normalize, ToTensor
 from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
+# For generated data
 class MovingMNist(Dataset):
+    def __init__(self, root, train):
+        self.root = root
+        self.train = train
+
+        self._transforms = Compose([
+            ToTensor(),
+            Normalize((0.1397,), (0.3081,))
+        ])
+        self._transforms = Compose([ToTensor(), Normalize((0.1397,), (0.3081,))])
+
+        # Get file name
+        if self.train:
+            img_filename = "moving_mnist_img_train.npy"
+            lbl_filename = "moving_mnist_lbl_train.npy"
+        else:
+            img_filename = "moving_mnist_img_val.npy"
+            lbl_filename = "moving_mnist_lbl_val.npy"
+
+        # Load data
+        self.img_data = np.load(
+            os.path.join(self.root, img_filename)).transpose((1, 0, 2, 3, 4))
+        self.lbl_data = np.load(
+            os.path.join(self.root, lbl_filename)).astype(np.float32)
+
+    def __getitem__(self, index):
+        img = self._transforms(self.img_data[index, 0, 0])
+        lbl = self.lbl_data[index]
+        return img, lbl
+
+    def __len__(self):
+        return len(self.img_data)
+
+
+# For test data downloaded from website
+class TestMovingMNist(Dataset):
     resources = ("http://www.cs.toronto.edu/~nitish/unsupervised_video/"
                  "mnist_test_seq.npy")
     filename = "mnist_test_seq.npy"

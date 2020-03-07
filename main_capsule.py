@@ -19,9 +19,9 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
-# from MovingMNist import MovingMNist
+from src.moving_mnist import MovingMNist
 from src import capsule_model, diverse_multi_mnist
-from utils import progress_bar
+# from utils import progress_bar
 
 # +
 parser = argparse.ArgumentParser(
@@ -75,6 +75,17 @@ parser.add_argument('--weight_decay',
                     default=5e-4,
                     type=float,
                     help='weight decay')
+parser.add_argument('--seed',
+                    default=0,
+                    type=int,
+                    help='random seed')
+parser.add_argument('--epoch',
+                    default=350,
+                    type=int,
+                    help="epoch")
+parser.add_argument('--interactive',
+                    action='store_true',
+                    help='interactive mode')
 # -
 
 args = parser.parse_args()
@@ -83,6 +94,12 @@ assert args.num_routing > 0
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 # Data
 print('==> Preparing data..')
@@ -122,16 +139,30 @@ if 'CIFAR' in args.dataset:
     total_lambda = lambda targets: targets.size(0)
     num_targets_lambda = lambda targets: targets.size(0)
 elif args.dataset == 'MovingMNist':
-    raise
-    train_set = MovingMNIST(root='.data/mnist', train=True, download=True)
-    test_set = MovingMNIST(root='.data/mnist', test=True, download=True)
-    train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                               batch_size=train_batch_size,
-                                               shuffle=True)
-    test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                              batch_size=test_batch_size,
-                                              shuffle=False)
     image_dim_size = 64
+    train_batch_size = 16
+    test_batch_size = 16
+
+    # root = "/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules"
+    train_set = MovingMNist(root=args.data_root, train=True)
+    test_set = MovingMNist(root=args.data_root, train=False)
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_set,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=args.num_workers)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set,
+        batch_size=test_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers)
+
+    loss_func = nn.BCEWithLogitsLoss()
+    predicted_lambda = lambda v: (torch.sigmoid(v) > 0.5).type(v.dtype)
+    correct_lambda = lambda predicted, targets:\
+        predicted.eq(targets).all(1).sum().item()
+    total_lambda = lambda targets: targets.size(0)
+    num_targets_lambda = lambda targets: targets.eq(1).sum().item()
 elif args.dataset == 'DiverseMultiMNist':
     train_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
     test_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
@@ -188,7 +219,7 @@ print(net)
 total_params = count_parameters(net)
 print(total_params)
 
-results_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
+results_dir = os.path.join(args.data_root, "result") # '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
 if not os.path.isdir(results_dir) and not args.debug:
     os.mkdir(results_dir)
 
@@ -200,7 +231,7 @@ if not args.debug:
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
-    cudnn.benchmark = True
+    # cudnn.benchmark = True
 
 
 if args.resume_dir and not args.debug:
@@ -222,11 +253,10 @@ def train(epoch):
     total = 0
     num_targets_total = 0
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-        if batch_idx == len(train_loader):
-            # This is dumb af.
-            break
+        # if batch_idx == len(train_loader):
+        #     # This is dumb af.
+        #     break
         inputs = inputs.to(device)
-
         targets = targets.to(device)
 
         optimizer.zero_grad()
@@ -250,15 +280,21 @@ def train(epoch):
         true_positive_count = (predicted.eq(targets) & targets.eq(1)).sum().item()
         true_correct += true_positive_count
 
-        s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
-        
-        progress_bar(batch_idx, len(train_loader), s % (
-            train_loss / (batch_idx + 1),
-            100. * correct / total, correct, total,
-            100. * true_correct / num_targets_total,
-            true_correct,
-            num_targets_total
-        ))
+        if args.interactive:
+            s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
+            progress_bar(batch_idx, len(train_loader), s % (
+                train_loss / (batch_idx + 1),
+                100. * correct / total, correct, total,
+                100. * true_correct / num_targets_total,
+                true_correct,
+                num_targets_total))
+        else:
+            print("Train Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})".format(
+                epoch, batch_idx+1, len(train_loader), train_loss / (batch_idx+1),
+                100. * correct / total, correct, total,
+                100. * true_correct / num_targets_total, true_correct,
+                num_targets_total))
+
     return 100. * correct / total
 
 
@@ -296,15 +332,20 @@ def test(epoch):
             true_positive_count = (predicted.eq(targets) & targets.eq(1)).sum().item()
             true_correct += true_positive_count
 
-            s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
-
-            progress_bar(batch_idx, len(test_loader), s % (
-                test_loss / (batch_idx + 1),
-                100. * correct / total, correct, total,
-                100. * true_correct / num_targets_total,
-                true_correct,
-                num_targets_total
-            ))
+            if args.interactive:
+                s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
+                progress_bar(batch_idx, len(test_loader), s % (
+                    test_loss / (batch_idx + 1),
+                    100. * correct / total, correct, total,
+                    100. * true_correct / num_targets_total,
+                    true_correct,
+                    num_targets_total))
+            else:
+                print("Val Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})".format(
+                    epoch, batch_idx+1, len(test_loader), test_loss / (batch_idx+1),
+                    100. * correct / total, correct, total,
+                    100. * true_correct / num_targets_total, true_correct,
+                    num_targets_total))
 
     # Save checkpoint.
     acc = 100. * correct / total
@@ -330,7 +371,7 @@ results = {
     'test_acc': [],
 }
 
-total_epochs = 350
+total_epochs = args.epoch
 
 if not args.debug:
     store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
@@ -345,4 +386,3 @@ for epoch in range(start_epoch, start_epoch + total_epochs):
     if not args.debug:
         pickle.dump(results, open(store_file, 'wb'))
 # -
-
