@@ -127,9 +127,3 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
-
-def count_parameters(model):
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(name, param.numel())
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)

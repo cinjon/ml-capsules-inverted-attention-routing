@@ -18,7 +18,13 @@ import torchvision.transforms as transforms
 import configs
 from src.moving_mnist import MovingMNist
 from src import capsule_model
-from utils import count_parameters
+# from utils import progress_bar
+
+def count_parameters(model):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name, param.numel())
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 # +
 parser = argparse.ArgumentParser(
