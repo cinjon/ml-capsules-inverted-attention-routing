@@ -190,7 +190,7 @@ if not args.debug:
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
-    # cudnn.benchmark = True
+    cudnn.benchmark = True
 
 
 if args.resume_dir and not args.debug:
@@ -226,7 +226,9 @@ def train(epoch):
         loss.backward()
         optimizer.step()
 
+        t1 = time.time()
         train_loss += loss.item()
+        print("t1:", time.time() - t1)
 
         # Compute distance
         with torch.no_grad():
@@ -247,17 +249,18 @@ def train(epoch):
             negative_dis))
         t = time.time()
 
-    return 0 # train_loss
+        # Debug
+        if batch_idx > 10: break
+
+    return train_loss
 
 
 def test(epoch):
-    global best_acc
+    global best_negative_dis
     net.eval()
     test_loss = 0
-    correct = 0
-    true_correct = 0
-    total = 0
-    num_targets_total = 0
+    total_positive_dis = 0.
+    total_negative_dis = 0.
     t = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, positive) in enumerate(test_loader):
@@ -289,6 +292,8 @@ def test(epoch):
                 positive_dis,
                 negative_dis))
             t = time.time()
+
+            if batch_idx > 10: break
 
     # Save checkpoint.
 
@@ -335,6 +340,5 @@ for epoch in range(start_epoch, start_epoch + total_epochs):
 
     lr_decay.step()
     results['test_loss'].append(test(epoch))
-    print('Epoch {} total test loss: {}'.format(results['test_loss'][-1]))
     if not args.debug:
         pickle.dump(results, open(store_file, 'wb'))
