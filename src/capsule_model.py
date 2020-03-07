@@ -17,11 +17,15 @@ class CapsModel(nn.Module):
                  backbone,
                  dp,
                  num_routing,
-                 sequential_routing=True):
+                 sequential_routing=True,
+                 return_embedding=False,
+                 flatten=False):
 
         super(CapsModel, self).__init__()
         #### Parameters
         self.sequential_routing = sequential_routing
+        self.return_embedding = return_embedding
+        self.flatten = flatten
 
         ## Primary Capsule Layer
         self.pc_num_caps = params['primary_capsules']['num_caps']
@@ -184,13 +188,20 @@ class CapsModel(nn.Module):
         # dmm - capsule_values:
         # [[64, 16, 8, 8, 64], [64, 16, 6, 6, 64], [64, 10, 64], [64, 10, 64]]
         out = capsule_values[-1]
-        # so the last one, out, is [64, 10, 64].
-        out = self.final_fc(out)  # fixed classifier for all capsules
-        # dmm - out.shape: 64, 10, 1
-        out = out.squeeze()  # fixed classifier for all capsules
-        # dmm - out.shape: 64, 10
 
-        # They commented this out.
-        #out = torch.einsum('bnd, nd->bn', out, self.final_fc) # different classifiers for distinct capsules
+        if self.return_embedding:
+            if self.flatten:
+                out = out.view(out.size(0), -1)
+            else:
+                return out
+        else:
+            # so the last one, out, is [64, 10, 64].
+            out = self.final_fc(out)  # fixed classifier for all capsules
+            # dmm - out.shape: 64, 10, 1
+            out = out.squeeze()  # fixed classifier for all capsules
+            # dmm - out.shape: 64, 10
+
+            # They commented this out.
+            #out = torch.einsum('bnd, nd->bn', out, self.final_fc) # different classifiers for distinct capsules
 
         return out

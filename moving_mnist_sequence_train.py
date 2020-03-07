@@ -1,11 +1,12 @@
-import argparse
-from datetime import datetime
-import json
 import os
+import json
+import time
 import pickle
 import random
-
+import argparse
 import numpy as np
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -155,7 +156,9 @@ net = capsule_model.CapsModel(
     args.backbone,
     args.dp,
     args.num_routing,
-    sequential_routing=args.sequential_routing)
+    sequential_routing=args.sequential_routing,
+    return_embedding=True,
+    flatten=False)
 
 # +
 optimizer = optim.SGD(
@@ -175,7 +178,7 @@ criterion = nn.TripletMarginLoss(margin=1.0, p=2)
 total_params = count_parameters(net)
 # print(total_params)
 
-results_dir = './results'
+results_dir = './contrastive_results'
 if not os.path.isdir(results_dir) and not args.debug:
     os.mkdir(results_dir)
 
@@ -203,9 +206,10 @@ if args.resume_dir and not args.debug:
 def train(epoch):
     print('\nEpoch: %d' % epoch)
     net.train()
-    train_loss = 0
+    train_loss = 0.
     total_positive_dis = 0.
     total_negative_dis = 0.
+    t = time.time()
     for batch_idx, (inputs, positive) in enumerate(train_loader):
         inputs = inputs.to(device)
         positive = positive.to(device)
@@ -215,7 +219,7 @@ def train(epoch):
         inputs_v = net(inputs)
         positive_v = net(positive)
         # TODO: if batch size is odd num then it won't work
-        negative_v = positive_v[::-1]
+        negative_v = positive_v.flip(0)
 
         loss = criterion(inputs_v, positive_v, negative_v)
 
@@ -231,17 +235,19 @@ def train(epoch):
             negative_dis = float(torch.dist(inputs_v, negative_v, 2).item())
             total_negative_dis += negative_dis
 
-        log_text = ('Train Epoch {} {}/{} | Loss: {:.5f} |'
+        log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} |'
                     'Positive distance: {:.5f} | Negative distance: {:.5f}')
         print(log_text.format(
-            epoch,
-            batch_idx,
+            epoch+1,
+            batch_idx+1,
             len(train_loader),
+            time.time() - t,
             train_loss/(batch_idx+1),
             positive_dis,
             negative_dis))
+        t = time.time()
 
-    return train_loss
+    return 0 # train_loss
 
 
 def test(epoch):
@@ -252,6 +258,7 @@ def test(epoch):
     true_correct = 0
     total = 0
     num_targets_total = 0
+    t = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, positive) in enumerate(test_loader):
             inputs = inputs.to(device)
@@ -259,8 +266,9 @@ def test(epoch):
 
             inputs_v = net(inputs)
             positive_v = net(positive)
+            negative_v = positive_v.flip(0)
 
-            loss = criterion(inputs_v, positive_v, positive_v[::-1])
+            loss = criterion(inputs_v, positive_v, negative_v)
 
             test_loss += loss.item()
 
@@ -270,15 +278,17 @@ def test(epoch):
             negative_dis = float(torch.dist(inputs_v, negative_v, 2).item())
             total_negative_dis += negative_dis
 
-            log_text = ('val Epoch {} {}/{} | Loss: {:.5f} |'
+            log_text = ('val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} |'
                         'Positive distance: {:.5f} | Negative distance: {:.5f}')
             print(log_text.format(
-                epoch,
-                batch_idx,
+                epoch+1,
+                batch_idx+1,
                 len(test_loader),
+                time.time() - t,
                 test_loss/(batch_idx+1),
                 positive_dis,
                 negative_dis))
+            t = time.time()
 
     # Save checkpoint.
 
@@ -287,7 +297,7 @@ def test(epoch):
         state = {
             'net': net.state_dict(),
             'total_positive_dis': total_positive_dis,
-            'total_negative_dis': total_negative_dis
+            'total_negative_dis': total_negative_dis,
             'epoch': epoch,
         }
         if not args.debug:
