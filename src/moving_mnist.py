@@ -10,15 +10,14 @@ from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 # For generated data
 class MovingMNist(Dataset):
-    def __init__(self, root, train):
+    def __init__(self, root, train=True, sequence=False):
         self.root = root
         self.train = train
+        self.sequence = sequence
 
         self._transforms = Compose([
             ToTensor(),
-            Normalize((0.1397,), (0.3081,))
-        ])
-        self._transforms = Compose([ToTensor(), Normalize((0.1397,), (0.3081,))])
+            Normalize((0.1397,), (0.3081,))])
 
         # Get file name
         if self.train:
@@ -34,10 +33,26 @@ class MovingMNist(Dataset):
         self.lbl_data = np.load(
             os.path.join(self.root, lbl_filename)).astype(np.float32)
 
+        self.seq_len = self.img_data.shape[1]
+        self.img_size = self.img_data.shape[3]
+
     def __getitem__(self, index):
-        img = self._transforms(self.img_data[index, 0, 0])
-        lbl = self.lbl_data[index]
-        return img, lbl
+        # Return a seuqnece
+        if self.sequence:
+            # Get random frame
+            frame_num = random.choice(range(self.seq_len-1))
+
+            # Process frames
+            this_frame = self._transforms(self.img_data[index, frame_num, 0])
+            next_frame = self._transforms(self.img_data[index, frame_num+1, 0])
+
+            return this_frame, next_frame
+
+        # Return the first frame in a sequence
+        else:
+            img = self._transforms(self.img_data[index, 0, 0])
+            lbl = self.lbl_data[index]
+            return img, lbl
 
     def __len__(self):
         return len(self.img_data)
@@ -96,8 +111,7 @@ class TestMovingMNist(Dataset):
         return len(self.data)
 
 
-def MovingMNist_collate(batch):
-    frame1 = torch.stack([item[0] for item in batch if item[3]])
-    frame2 = torch.stack([item[1] for item in batch if item[3]])
-    frame3 = torch.stack([item[2] for item in batch if item[3]])
-    return [frame1, frame2, frame3]
+def MovingMNist_sequence_collate(batch):
+    frame1 = torch.stack([item[0] for item in batch if item[2]])
+    frame2 = torch.stack([item[1] for item in batch if item[2]])
+    return [frame1, frame2]
