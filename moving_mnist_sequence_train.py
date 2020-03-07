@@ -255,9 +255,6 @@ def train(epoch):
             negative_dis))
         t = time.time()
 
-        # Debug
-        if batch_idx > 10: break
-
     return train_loss
 
 
@@ -299,10 +296,7 @@ def test(epoch):
                 negative_dis))
             t = time.time()
 
-            if batch_idx > 10: break
-
     # Save checkpoint.
-
     if total_negative_dis > best_negative_dis and not args.debug:
         print('Saving..')
         state = {
