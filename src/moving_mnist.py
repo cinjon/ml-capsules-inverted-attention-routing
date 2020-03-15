@@ -5,8 +5,8 @@ from glob import glob
 from scipy.io.matlab import loadmat
 
 import torch
-from torch.utisls.data import Dataset
-from torchvision.transforms import Compose, Normalize, ToTensor
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
@@ -16,9 +16,9 @@ class MovingMNist(Dataset):
         self.train = train
         self.sequence = sequence
 
-        self._transforms = Compose([
-            ToTensor(),
-            Normalize((0.1397,), (0.3081,))])
+        self._transforms = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1397,), (0.3081,))])
 
         # Get file name
         if self.train:
@@ -69,18 +69,20 @@ class affNIST(Dataset):
         self.root = root
         self.train = train
         if self.train:
-            self.paths = glob(os.path.join(root, "training_batches", "*.mat"))
+            self.paths = glob(os.path.join(root, "training_batches", "1.mat"))
         else:
-            self.paths = glob(os.path.join(root, "validation_batches", "*.mat"))
-        self._transform = Compose([
-            ToTensor(),
-            Normalize((0.1397,), (0.3081,))])
+            self.paths = glob(os.path.join(root, "validation_batches", "1.mat"))
+        self._transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Pad(12),
+            transforms.ToTensor(),
+            transforms.Normalize((0.1397,), (0.3081,))])
 
         self.imgs = []
         self.lbls = []
         for path in self.paths:
             data_arr = loadmat(path)["affNISTdata"][0, 0]
-            self.lbls.append(data_arr[5].transpose((1, 0)))
+            self.lbls.append(data_arr[5].flatten())
             self.imgs.append(
                 data_arr[2].transpose((1, 0)).reshape((-1, 40, 40)))
 
