@@ -117,11 +117,11 @@ def load_dataset(root, trianing=True):
     return imgs, lbls
 
 def generate_moving_mnist(
-    training, shape, num_frames, num_images,
+    dest, training, shape, num_frames, num_images,
     original_size, nums_per_image, num_single_label):
 
     width, height = shape
-    img_data, lbl_data = load_dataset("./", training)
+    img_data, lbl_data = load_dataset(dest, training)
 
     # Get label metadata in MNists
     repeat_num = math.ceil(nums_per_image * num_images / len(lbl_data))
@@ -242,6 +242,7 @@ def generate_moving_mnist(
 
 def main(args):
     img_data, lbl_data = generate_moving_mnist(
+        args.dest,
         args.training,
         shape=(args.frame_size, args.frame_size),
         num_frames=args.num_frames,
@@ -251,11 +252,11 @@ def main(args):
         num_single_label=args.num_single_label)
 
     if args.training:
-        img_dest = args.dest + "_img_train"
-        lbl_dest = args.dest + "_lbl_train"
+        img_dest = os.path.join(args.dest, "moving_mnist_img_train")
+        lbl_dest = os.path.join(args.dest, "moving_mnist_lbl_train")
     else:
-        img_dest = args.dest + "_img_val"
-        lbl_dest = args.dest + "_lbl_val"
+        img_dest = os.path.join(args.dest, "moving_mnist_img_val")
+        lbl_dest = os.path.join(args.dest, "moving_mnist_lbl_val")
 
     np.save(img_dest, img_data)
     np.save(lbl_dest, lbl_data)
