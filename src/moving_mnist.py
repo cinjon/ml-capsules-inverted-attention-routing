@@ -1,6 +1,9 @@
 import os
+import gzip
+import math
 import random
 import numpy as np
+from PIL import Image
 from glob import glob
 from scipy.io.matlab import loadmat
 
@@ -16,6 +19,7 @@ class NewMovingMNist(Dataset):
         root,
         dataset_size,
         train=True,
+        sequence=True,
         width=64,
         height=64,
         num_frames=20,
@@ -26,6 +30,7 @@ class NewMovingMNist(Dataset):
         self.root = root
         self.dataset_size = dataset_size
         self.train = train
+        self.sequence = sequence
         self.width = width
         self.height = height
         self.num_frames = num_frames
@@ -61,7 +66,7 @@ class NewMovingMNist(Dataset):
         # Eg: 20 x 1 x 64 x 64
         _imgs = np.empty(
             (self.num_frames, 1, self.width, self.height), dtype=np.uint8)
-        lbls = np.zeros((10,), dtype=np.uint8)
+        lbls = np.zeros((10,), dtype=np.float32)
 
         # Randomly generate direction, speed and velocity
         # for both images
@@ -76,7 +81,7 @@ class NewMovingMNist(Dataset):
             range(10), this_nums_per_image, replace=False)
 
         # Assign labels
-        lbls[random_categories] = 1
+        lbls[random_categories] = 1.
 
         # Pick random images within those random categories
         # TODO: check if original paper avoid having same numbers
@@ -145,6 +150,10 @@ class NewMovingMNist(Dataset):
         # Perform transformation
         imgs = torch.cat([
             self._transforms(img[0]).unsqueeze(0) for img in _imgs])
+
+        # TODO: change num_frames to 1 instead of this to save time
+        if not self.sequence:
+            imgs = imgs[0]
 
         return imgs, lbls
 
