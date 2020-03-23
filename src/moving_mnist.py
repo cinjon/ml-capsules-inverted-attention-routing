@@ -17,8 +17,8 @@ class NewMovingMNist(Dataset):
     def __init__(
         self,
         root,
-        dataset_size,
         train=True,
+        dataset_size=120000,
         sequence=True,
         width=64,
         height=64,
@@ -42,123 +42,146 @@ class NewMovingMNist(Dataset):
             transforms.ToTensor(),
             transforms.Normalize((0.1397,), (0.3081,))])
 
-        self.load_dataset()
+        if self.train:
+            self.load_dataset()
 
-        self.indices_list = []
-        for i in range(10):
-            indices = np.argwhere(self.lbl_data == i).flatten()
-            self.indices_list.append(indices)
+            self.indices_list = []
+            for i in range(10):
+                indices = np.argwhere(self.lbl_data == i).flatten()
+                self.indices_list.append(indices)
 
-        # Get how many pixels can we move around a single image
-        self.x_lim = self.width - self.original_size
-        self.y_lim = self.height - self.original_size
-        self.lims = (self.x_lim, self.y_lim)
+            # Get how many pixels can we move around a single image
+            self.x_lim = self.width - self.original_size
+            self.y_lim = self.height - self.original_size
+            self.lims = (self.x_lim, self.y_lim)
+        else:
+            self.lbls = np.load(
+                os.path.join(root, "moving_mnist_lbl_val.npy"))
+
+            self.img_folder = os.path.join(root, "val_imgs")
 
     def __getitem__(self, index):
-        # Randomly choose single-label image or multi-label image
-        if np.random.rand() > self.chance_single_label:
-            this_nums_per_image = self.nums_per_image
+        # Train set
+        if self.train:
+            # Randomly choose single-label image or multi-label image
+            if np.random.rand() > self.chance_single_label:
+                this_nums_per_image = self.nums_per_image
+            else:
+                this_nums_per_image = 1
+
+            # Create a np array of shape of
+            # num_frames x 1 x new_width x new_height
+            # Eg: 20 x 1 x 64 x 64
+            _imgs = np.empty(
+                (self.num_frames, 1, self.width, self.height), dtype=np.uint8)
+            lbls = np.zeros((10,), dtype=np.float32)
+
+            # Randomly generate direction, speed and velocity
+            # for both images
+            direcs = np.pi * (np.random.rand(this_nums_per_image) * 2 - 1)
+            speeds = np.random.randint(5, size=this_nums_per_image) + 2
+            veloc = np.asarray(
+                [(speed * math.cos(direc), speed * math.sin(direc))\
+                    for direc, speed in zip(direcs, speeds)])
+
+            # Pick random categories
+            random_categories = np.random.choice(
+                range(10), this_nums_per_image, replace=False)
+
+            # Assign labels
+            lbls[random_categories] = 1.
+
+            # Pick random images within those random categories
+            # TODO: check if original paper avoid having same numbers
+            # in an image
+            random_indices = []
+            for random_category in random_categories:
+                random_indices.append(
+                    np.random.choice(self.indices_list[random_category]))
+
+            mnist_images = []
+            positions = []
+            for r in random_indices:
+                # Get a list containing two PIL images randomly sampled
+                # from the database
+                img = get_image_from_array(self.img_data[r])
+                img = Image.fromarray(img).resize(
+                    (self.original_size, self.original_size),
+                    Image.ANTIALIAS)
+                mnist_images.append(img)
+
+                # Generate tuples of (x, y) i.e initial positions for
+                # nums_per_image (default: 2)
+                positions.append([
+                    np.random.rand() * self.x_lim,
+                    np.random.rand() * self.y_lim])
+
+            positions = np.asarray(positions)
+
+            # Generate new frames for the entire num_frames
+            for frame_idx in range(self.num_frames):
+                canvases = [Image.new("L", (self.width, self.height))\
+                    for _ in range(this_nums_per_image)]
+                canvas = np.zeros(
+                    (1, self.width, self.height), dtype=np.float32)
+
+                # In canv (i.e Image object) place the image at the
+                # respective positions
+                # Super impose both images on the canvas
+                # (i.e empty np array)
+                for i, canv in enumerate(canvases):
+                    canv.paste(
+                        mnist_images[i], tuple(positions[i].astype(int)))
+                    canvas += arr_from_img(canv)
+
+                    # Get the next position by adding velocity
+                    next_pos = positions + veloc
+
+                    # Iterate over velocity and see if we hit the wall
+                    # If we do then change the direction
+                    for i, pos in enumerate(next_pos):
+                        for j, coord in enumerate(pos):
+                            if coord < -2 or coord > self.lims[j] + 2:
+                                veloc[i] = list(
+                                    list(veloc[i][:j]) +\
+                                    [-1 * veloc[i][j]] +\
+                                    list(veloc[i][j+1:]))
+
+                    # Make the permanent change to position by adding
+                    # updated velocity
+                    positions = positions + veloc
+
+                    # Add the canvas to the dataset array
+                    _imgs[frame_idx] =\
+                        (canvas * 255.).clip(0, 255).astype(np.uint8)
+
+            # Perform transformation
+            imgs = torch.cat([
+                self._transforms(img[0]).unsqueeze(0) for img in _imgs])
+
+            # TODO: change num_frames to 1 instead of this to save time
+            if not self.sequence:
+                imgs = imgs[0]
+
+        # Validation set
         else:
-            this_nums_per_image = 1
+            _imgs = np.load(os.path.join(
+                self.img_folder, "{}.npy".format(str(index).zfill(5))))
+            imgs = torch.cat([
+                self._transforms(img[0]).unsqueeze(0) for img in _imgs])
+            if not self.sequence:
+                imgs = imgs[0]
 
-        # Create a np array of shape of
-        # num_frames x 1 x new_width x new_height
-        # Eg: 20 x 1 x 64 x 64
-        _imgs = np.empty(
-            (self.num_frames, 1, self.width, self.height), dtype=np.uint8)
-        lbls = np.zeros((10,), dtype=np.float32)
-
-        # Randomly generate direction, speed and velocity
-        # for both images
-        direcs = np.pi * (np.random.rand(this_nums_per_image) * 2 - 1)
-        speeds = np.random.randint(5, size=this_nums_per_image) + 2
-        veloc = np.asarray(
-            [(speed * math.cos(direc), speed * math.sin(direc))\
-                for direc, speed in zip(direcs, speeds)])
-
-        # Pick random categories
-        random_categories = np.random.choice(
-            range(10), this_nums_per_image, replace=False)
-
-        # Assign labels
-        lbls[random_categories] = 1.
-
-        # Pick random images within those random categories
-        # TODO: check if original paper avoid having same numbers
-        # in an image
-        random_indices = []
-        for random_category in random_categories:
-            random_indices.append(
-                np.random.choice(self.indices_list[random_category]))
-
-        mnist_images = []
-        positions = []
-        for r in random_indices:
-            # Get a list containing two PIL images randomly sampled
-            # from the database
-            img = get_image_from_array(self.img_data[r])
-            img = Image.fromarray(img).resize(
-                (self.original_size, self.original_size),
-                Image.ANTIALIAS)
-            mnist_images.append(img)
-
-            # Generate tuples of (x, y) i.e initial positions for
-            # nums_per_image (default: 2)
-            positions.append([
-                np.random.rand() * self.x_lim,
-                np.random.rand() * self.y_lim])
-
-        positions = np.asarray(positions)
-
-        # Generate new frames for the entire num_frames
-        for frame_idx in range(self.num_frames):
-            canvases = [Image.new("L", (self.width, self.height))\
-                for _ in range(this_nums_per_image)]
-            canvas = np.zeros(
-                (1, self.width, self.height), dtype=np.float32)
-
-            # In canv (i.e Image object) place the image at the
-            # respective positions
-            # Super impose both images on the canvas
-            # (i.e empty np array)
-            for i, canv in enumerate(canvases):
-                canv.paste(
-                    mnist_images[i], tuple(positions[i].astype(int)))
-                canvas += arr_from_img(canv)
-
-                # Get the next position by adding velocity
-                next_pos = positions + veloc
-
-                # Iterate over velocity and see if we hit the wall
-                # If we do then change the direction
-                for i, pos in enumerate(next_pos):
-                    for j, coord in enumerate(pos):
-                        if coord < -2 or coord > self.lims[j] + 2:
-                            veloc[i] = list(
-                                list(veloc[i][:j]) +\
-                                [-1 * veloc[i][j]] +\
-                                list(veloc[i][j+1:]))
-
-                # Make the permanent change to position by adding
-                # updated velocity
-                positions = positions + veloc
-
-                # Add the canvas to the dataset array
-                _imgs[frame_idx] =\
-                    (canvas * 255.).clip(0, 255).astype(np.uint8)
-
-        # Perform transformation
-        imgs = torch.cat([
-            self._transforms(img[0]).unsqueeze(0) for img in _imgs])
-
-        # TODO: change num_frames to 1 instead of this to save time
-        if not self.sequence:
-            imgs = imgs[0]
+            lbls = self.lbls[index]
 
         return imgs, lbls
 
     def __len__(self):
-        return self.dataset_size
+        if self.train:
+            _len = self.dataset_size
+        else:
+            _len = len(self.lbls)
+        return _len
 
 
     def load_dataset(self):
