@@ -1,9 +1,11 @@
-import os
-import sys
-import math
-import time
-import gzip
 import argparse
+import gzip
+import os
+import math
+import shutil
+import sys
+import time
+
 import numpy as np
 from PIL import Image
 
@@ -13,6 +15,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--dest",
     default="",
+    type=str,
+    help="data dir")
+parser.add_argument(
+    "--mnist_folder",
+    default="/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/MNIST/raw",
     type=str,
     help="data dir")
 parser.add_argument(
@@ -94,10 +101,10 @@ def download(root, filename):
 
     return filepath
 
-def load_dataset(root, trianing=True):
-    img_filename = "train-images-idx3-ubyte.gz" if trianing\
+def load_dataset(root, training=True):
+    img_filename = "train-images-idx3-ubyte.gz" if training\
         else "t10k-images-idx3-ubyte.gz"
-    lbl_filename = "train-labels-idx1-ubyte.gz" if trianing\
+    lbl_filename = "train-labels-idx1-ubyte.gz" if training\
         else "t10k-labels-idx1-ubyte.gz"
 
     # Download data if not exist
@@ -114,17 +121,20 @@ def load_dataset(root, trianing=True):
     with gzip.open(lbl_filepath, "rb") as f:
         lbls = np.frombuffer(f.read(), np.uint8, offset=8)
 
+    print('Wat: ', len(lbls), lbl_filename)
+    print('Wat2: ', len(imgs), img_filename)
+
     return imgs, lbls
 
 def generate_moving_mnist(
-    dest, training, shape, num_frames, num_images,
+    mnist_folder, training, shape, num_frames, num_images,
     original_size, nums_per_image, num_single_label):
-
     width, height = shape
-    img_data, lbl_data = load_dataset(dest, training)
+    img_data, lbl_data = load_dataset(mnist_folder, training)
 
     # Get label metadata in MNists
     repeat_num = math.ceil(nums_per_image * num_images / len(lbl_data))
+    print("Repeat Num: ", repeat_num, nums_per_image, num_images)
     category_nums = np.zeros(10, dtype=np.int32)
     indices_list = []
     for i in range(10):
@@ -233,16 +243,14 @@ def generate_moving_mnist(
             imgs[frame_idx, img_idx] =\
                 (canvas * 255.).clip(0, 255).astype(np.uint8)
 
-    shuffle_indices = np.array(range(num_images))
-    np.random.shuffle(shuffle_indices)
-    imgs = imgs[:, shuffle_indices]
-    lbls = lbls[shuffle_indices]
-
+    # shuffle_indices = np.array(range(num_images))
+    # np.random.shuffle(shuffle_indices)
+    imgs = imgs.transpose(1, 0, 2, 3, 4)
     return imgs, lbls
 
 def main(args):
     img_data, lbl_data = generate_moving_mnist(
-        args.dest,
+        args.mnist_folder,
         args.training,
         shape=(args.frame_size, args.frame_size),
         num_frames=args.num_frames,
@@ -251,15 +259,22 @@ def main(args):
         nums_per_image=args.nums_per_image,
         num_single_label=args.num_single_label)
 
-    if args.training:
-        img_dest = os.path.join(args.dest, "moving_mnist_img_train")
-        lbl_dest = os.path.join(args.dest, "moving_mnist_lbl_train")
-    else:
-        img_dest = os.path.join(args.dest, "moving_mnist_img_val")
-        lbl_dest = os.path.join(args.dest, "moving_mnist_lbl_val")
+    subfolder = 'train' if args.training else 'val'
+    destination_folder = os.path.join(args.dest, subfolder)
+    if os.path.exists(destination_folder):
+        shutil.rmtree(destination_folder)
 
-    np.save(img_dest, img_data)
-    np.save(lbl_dest, lbl_data)
+    img_folder = os.path.join(destination_folder, 'imgs')
+    lbl_folder = os.path.join(destination_folder, 'labels')
+    os.makedirs(img_folder)
+    os.makedirs(lbl_folder)
+
+    for i in range(len(img_data)):
+        img = img_data[i]
+        lbl = lbl_data[i]
+        np.save(os.path.join(img_folder, '%06d.npy' % i), img)
+        np.save(os.path.join(lbl_folder, '%06d.npy' % i), lbl)
+
 
 if __name__ == "__main__":
     main(args)
