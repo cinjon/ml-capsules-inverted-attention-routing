@@ -1,3 +1,11 @@
+"""
+
+Sample Command:
+python moving_mnist_sequence_train.py --criterion xent --results_dir /.../resnick/vidcaps/results \
+--debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
+--config resnet_backbone_movingmnist2
+"""
+
 import os
 import json
 import time
