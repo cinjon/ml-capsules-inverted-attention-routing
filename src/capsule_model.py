@@ -2,30 +2,27 @@
 # For licensing see accompanying LICENSE file.
 # Copyright (C) 2019 Apple Inc. All Rights Reserved.
 #
-from src import layers
+import random
+
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+
+from src import layers
 
 
 # Capsule model
 class CapsModel(nn.Module):
 
     def __init__(self,
-                 image_dim_size,
                  params,
                  backbone,
                  dp,
                  num_routing,
-                 sequential_routing=True,
-                 return_embedding=False,
-                 flatten=False):
-
+                 sequential_routing=True):
         super(CapsModel, self).__init__()
         #### Parameters
         self.sequential_routing = sequential_routing
-        self.return_embedding = return_embedding
-        self.flatten = flatten
 
         ## Primary Capsule Layer
         self.pc_num_caps = params['primary_capsules']['num_caps']
@@ -129,7 +126,7 @@ class CapsModel(nn.Module):
         # different classifier for different capsules
         #self.final_fc = nn.Parameter(torch.randn(params['class_capsules']['num_caps'], params['class_capsules']['caps_dim']))
 
-    def forward(self, x, lbl_1=None, lbl_2=None):
+    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=True, flatten=False):
         #### Forward Pass
         ## Backbone (before capsule)
         c = self.pre_caps(x)
@@ -189,9 +186,9 @@ class CapsModel(nn.Module):
         # [[64, 16, 8, 8, 64], [64, 16, 6, 6, 64], [64, 10, 64], [64, 10, 64]]
         out = capsule_values[-1]
 
-        if self.return_embedding:
-            if self.flatten:
-                out = out.view(out.size(0), -1)
+        if return_embedding:
+            if flatten:
+                return out.view(out.size(0), -1)
             else:
                 return out
         else:
@@ -205,3 +202,94 @@ class CapsModel(nn.Module):
             #out = torch.einsum('bnd, nd->bn', out, self.final_fc) # different classifiers for distinct capsules
 
         return out
+
+    def get_xent_loss(self, images, labels):
+        images = images[:, 0, :, :, :]
+        output = self(images, return_embedding=False)
+        loss = nn.BCEWithLogitsLoss()(output, labels)
+        predicted = (torch.sigmoid(output) > 0.5).type(output.dtype)
+        num_total = labels.size(0)
+        num_targets = labels.eq(1).sum().item()
+        correct = predicted.eq(labels).all(1).sum().item()
+        true_positive_count = (predicted.eq(labels) & labels.eq(1)).sum().item()
+        stats = {
+            'true_pos': true_positive_count,
+            'num_targets': num_targets 
+        }
+        return loss, stats
+
+    def get_triplet_loss(self, images, args):
+        inputs_v = self(inputs, return_embedding=True, flatten=False)
+        positive_v = self(positive, return_embedding=True, flatten=False)
+        # TODO: if batch size is odd num then it won't work
+        negative_v = positive_v.flip(0)
+
+        # Compute distance
+        with torch.no_grad():
+            positive_distance = float(torch.dist(inputs_v, positive_v, 2).item())
+            negative_distance = float(torch.dist(inputs_v, negative_v, 2).item())
+
+        stats = {'positive_distance': positive_distance,
+                 'negative_distance': negative_distance}
+
+        return loss, stats
+
+    def get_nce_loss(self, images, args):
+        positive_frame_num = args.nce_positive_frame_num
+        use_random_anchor_frame = args.use_random_anchor_frame
+
+        if use_random_anchor_frame:
+            # NOTE: not implemented.
+            raise
+        else:
+            anchor_frame = 0
+
+        anchor = images[:, anchor_frame]
+        anchor = self(anchor, return_embedding=True, flatten=False)
+        other = images[:, anchor_frame + positive_frame_num]
+        other = self(other, return_embedding=True, flatten=False)
+
+        # Anchor / Positive should now be [bs, num_capsules, num_dims].
+        # We get the similarity of these via
+        # sim(X, Y) = temp * anchor * other / (||anchor|| * ||other||)
+        # ... Do we want this to happen over capsules or over flattened?
+        # I think it should happen over capsules. So the rescaling would occur
+        # over each capsule's dims rather than all of it in total.
+        batch_size = anchor.size(0)
+        anchor_normalized = anchor / anchor.norm(dim=2, keepdim=True)
+        anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+        other_normalized = other / other.norm(dim=2, keepdim=True)
+        other_normalized = other_normalized.view(1, batch_size, -1)
+
+        # similarity will be [bs, bs, num_capsules * num_dims] after this.
+        similarity = anchor_normalized * other_normalized
+        # now multiply by the temperature.
+        similarity *= args.nce_temperature
+        # and then sum to get the dot product (cosign similarity).
+        # this is [bs, bs]. the positive samples are on the diagonal.
+        similarity = similarity.sum(2)
+
+        # the diagonal has the positive similarity = log(exp(sim(x, y)))
+        identity = torch.eye(batch_size).to(similarity.device)
+        positive_similarity = (similarity * identity).sum(1)
+
+        # we get the total similarity by taking the logsumexp of similarity.
+        log_sum_total = torch.logsumexp(similarity, dim=1)
+
+        diff = positive_similarity - log_sum_total
+        nce = -diff.mean()
+
+        total_similarity = similarity.sum(1)
+        negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+        positive_similarity = positive_similarity.mean().item()
+        stats = {
+            'pos_sim': positive_similarity,
+            'neg_sim': negative_similarity
+        }
+        return nce, stats
+
+
+
+        
+
+

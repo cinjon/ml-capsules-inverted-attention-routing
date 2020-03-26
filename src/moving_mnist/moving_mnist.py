@@ -13,7 +13,7 @@ import torchvision.transforms as transforms
 from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
-class NewMovingMNist(Dataset):
+class MovingMNist(Dataset):
 
     def __init__(self,
                  root,
@@ -56,7 +56,6 @@ class NewMovingMNist(Dataset):
             self.lims = (self.x_lim, self.y_lim)
         else:
             self.lbls = np.load(os.path.join(root, "moving_mnist_lbl_val.npy"))
-
             self.img_folder = os.path.join(root, "val_imgs")
 
     def __getitem__(self, index):
@@ -212,7 +211,7 @@ class NewMovingMNist(Dataset):
         return filepath
 
 
-class MovingMNist(Dataset):
+class StaticMovingMNist(Dataset):
 
     def __init__(self, root, train=True, sequence=False):
         self.root = root
