@@ -16,7 +16,7 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
-from src.moving_mnist import MovingMNist
+from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
 # from utils import progress_bar
 
