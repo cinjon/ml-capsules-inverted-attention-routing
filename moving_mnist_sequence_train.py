@@ -20,97 +20,72 @@ from src.moving_mnist import MovingMNist
 from src import capsule_model
 # from utils import progress_bar
 
+
 def count_parameters(model):
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(name, param.numel())
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
 # +
 parser = argparse.ArgumentParser(
     description='Training Capsules using Inverted Dot-Product Attention Routing'
 )
 
-parser.add_argument(
-    '--resume_dir',
-    '-r',
-    default='',
-    type=str,
-    help='dir where we resume from checkpoint')
-parser.add_argument(
-    '--num_routing',
-    default=1,
-    type=int,
-    help='number of routing. Recommended: 0,1,2,3.')
-parser.add_argument(
-    '--dataset',
-    default='MovingMNist',
-    type=str,
-    help='dataset. so far only MovingMNist.')
-parser.add_argument(
-    '--backbone',
-    default='resnet',
-    type=str,
-    help='type of backbone. simple or resnet')
+parser.add_argument('--resume_dir',
+                    '-r',
+                    default='',
+                    type=str,
+                    help='dir where we resume from checkpoint')
+parser.add_argument('--num_routing',
+                    default=1,
+                    type=int,
+                    help='number of routing. Recommended: 0,1,2,3.')
+parser.add_argument('--dataset',
+                    default='MovingMNist',
+                    type=str,
+                    help='dataset. so far only MovingMNist.')
+parser.add_argument('--backbone',
+                    default='resnet',
+                    type=str,
+                    help='type of backbone. simple or resnet')
 parser.add_argument(
     '--data_root',
     default=('/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/'
              'ml-capsules-inverted-attention-routing/data'),
     type=str,
     help='root of where to put the data.')
-parser.add_argument(
-    '--num_workers',
-    default=2,
-    type=int,
-    help='number of workers. 0 or 2')
-parser.add_argument(
-    '--num_gpus',
-    default=1,
-    type=int,
-    help='number of gpus.')
-parser.add_argument(
-    '--config',
-    default='resnet_backbone_movingmnist',
-    type=str,
-    help='path of the config')
-parser.add_argument(
-    '--debug',
-    action='store_true',
-    help='use debug mode (without saving to a directory)')
-parser.add_argument(
-    '--sequential_routing',
-    action='store_true',
-    help='not using concurrent_routing')
-parser.add_argument(
-    '--lr',
-    default=0.1,
-    type=float,
-    help='learning rate. 0.1 for SGD')
-parser.add_argument(
-    '--dp',
-    default=0.0,
-    type=float,
-    help='dropout rate')
-parser.add_argument(
-    '--weight_decay',
-    default=5e-4,
-    type=float,
-    help='weight decay')
-parser.add_argument(
-    '--seed',
-    default=0,
-    type=int,
-    help='random seed')
-parser.add_argument(
-    '--epoch',
-    default=350,
-    type=int,
-    help='number of epoch')
-parser.add_argument(
-    '--batch_size',
-    default=8,
-    type=int,
-    help='number of batch size')
+parser.add_argument('--num_workers',
+                    default=2,
+                    type=int,
+                    help='number of workers. 0 or 2')
+parser.add_argument('--num_gpus', default=1, type=int, help='number of gpus.')
+parser.add_argument('--config',
+                    default='resnet_backbone_movingmnist',
+                    type=str,
+                    help='path of the config')
+parser.add_argument('--debug',
+                    action='store_true',
+                    help='use debug mode (without saving to a directory)')
+parser.add_argument('--sequential_routing',
+                    action='store_true',
+                    help='not using concurrent_routing')
+parser.add_argument('--lr',
+                    default=0.1,
+                    type=float,
+                    help='learning rate. 0.1 for SGD')
+parser.add_argument('--dp', default=0.0, type=float, help='dropout rate')
+parser.add_argument('--weight_decay',
+                    default=5e-4,
+                    type=float,
+                    help='weight decay')
+parser.add_argument('--seed', default=0, type=int, help='random seed')
+parser.add_argument('--epoch', default=350, type=int, help='number of epoch')
+parser.add_argument('--batch_size',
+                    default=8,
+                    type=int,
+                    help='number of batch size')
 # -
 
 args = parser.parse_args()
@@ -139,16 +114,14 @@ if args.dataset == 'MovingMNist':
     train_set = MovingMNist(args.data_root, train=True, sequence=True)
     test_set = MovingMNist(args.data_root, train=False, sequence=True)
 
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_set,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers)
-    test_loader = torch.utils.data.DataLoader(
-        dataset=test_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers)
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=args.batch_size,
+                                               shuffle=True,
+                                               num_workers=args.num_workers)
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=args.batch_size,
+                                              shuffle=False,
+                                              num_workers=args.num_workers)
 else:
     raise
 
@@ -156,27 +129,24 @@ print('==> Building model..')
 # Model parameters
 
 print(config)
-net = capsule_model.CapsModel(
-    image_dim_size,
-    config['params'],
-    args.backbone,
-    args.dp,
-    args.num_routing,
-    sequential_routing=args.sequential_routing,
-    return_embedding=True,
-    flatten=False)
+net = capsule_model.CapsModel(image_dim_size,
+                              config['params'],
+                              args.backbone,
+                              args.dp,
+                              args.num_routing,
+                              sequential_routing=args.sequential_routing,
+                              return_embedding=True,
+                              flatten=False)
 
 # +
-optimizer = optim.SGD(
-    net.parameters(),
-    lr=args.lr,
-    momentum=0.9,
-    weight_decay=args.weight_decay)
+optimizer = optim.SGD(net.parameters(),
+                      lr=args.lr,
+                      momentum=0.9,
+                      weight_decay=args.weight_decay)
 
-lr_decay = torch.optim.lr_scheduler.MultiStepLR(
-    optimizer,
-    milestones=[150, 250],
-    gamma=0.1)
+lr_decay = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                milestones=[150, 250],
+                                                gamma=0.1)
 
 criterion = nn.TripletMarginLoss(margin=1.0, p=2)
 
@@ -197,7 +167,6 @@ net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
     cudnn.benchmark = True
-
 
 if args.resume_dir and not args.debug:
     # Load checkpoint.
@@ -245,14 +214,10 @@ def train(epoch):
 
         log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} |'
                     'Positive distance: {:.5f} | Negative distance: {:.5f}')
-        print(log_text.format(
-            epoch+1,
-            batch_idx+1,
-            len(train_loader),
-            time.time() - t,
-            train_loss/(batch_idx+1),
-            positive_dis,
-            negative_dis))
+        print(
+            log_text.format(epoch + 1, batch_idx + 1, len(train_loader),
+                            time.time() - t, train_loss / (batch_idx + 1),
+                            positive_dis, negative_dis))
         t = time.time()
 
     return train_loss
@@ -286,14 +251,10 @@ def test(epoch):
 
             log_text = ('val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} |'
                         'Positive distance: {:.5f} | Negative distance: {:.5f}')
-            print(log_text.format(
-                epoch+1,
-                batch_idx+1,
-                len(test_loader),
-                time.time() - t,
-                test_loss/(batch_idx+1),
-                positive_dis,
-                negative_dis))
+            print(
+                log_text.format(epoch + 1, batch_idx + 1, len(test_loader),
+                                time.time() - t, test_loss / (batch_idx + 1),
+                                positive_dis, negative_dis))
             t = time.time()
 
     # Save checkpoint.
@@ -309,11 +270,7 @@ def test(epoch):
             torch.save(state, os.path.join(store_dir, 'ckpt.pth'))
         best_negative_dis = total_negative_dis
 
-    state = {
-        'net': net.state_dict(),
-        'loss': test_loss,
-        'epoch': epoch
-    }
+    state = {'net': net.state_dict(), 'loss': test_loss, 'epoch': epoch}
     if not args.debug:
         torch.save(state, os.path.join(store_dir, 'ckpt.pth'))
 
@@ -331,8 +288,8 @@ results = {
 total_epochs = args.epoch
 
 if not args.debug:
-    store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
-        str(args.dataset), str(args.num_routing), args.backbone)
+    store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (str(
+        args.dataset), str(args.num_routing), args.backbone)
     store_file = os.path.join(store_dir, store_file)
 
 for epoch in range(start_epoch, start_epoch + total_epochs):

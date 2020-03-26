@@ -161,7 +161,8 @@ class CapsuleFC(nn.Module):
         if self.matrix_pose:
             w = self.w  # nxdm
             # This is [16,576,64] with a sqrt_d = 8 on the first go around.
-            _input = input.view(input.shape[0], input.shape[1], self.sqrt_d, self.sqrt_d)
+            _input = input.view(input.shape[0], input.shape[1], self.sqrt_d,
+                                self.sqrt_d)
         else:
             w = self.w
 
@@ -270,8 +271,13 @@ class CapsuleCONV(nn.Module):
 
     def input_expansion(self, input):
         # input has size [batch x num_of_capsule x height x width x  x capsule_dimension]
-        unfolded_input = input.unfold(2,size=self.kernel_size,step=self.stride).unfold(3,size=self.kernel_size,step=self.stride)
-        unfolded_input = unfolded_input.permute([0,1,5,6,2,3,4])
+        unfolded_input = input.unfold(2,
+                                      size=self.kernel_size,
+                                      step=self.stride).unfold(
+                                          3,
+                                          size=self.kernel_size,
+                                          step=self.stride)
+        unfolded_input = unfolded_input.permute([0, 1, 5, 6, 2, 3, 4])
         # output has size [batch x num_of_capsule x kernel_size x kernel_size x h_out x w_out x capsule_dimension]
         return unfolded_input
 
@@ -325,10 +331,8 @@ class CapsuleCONV(nn.Module):
         if not next_capsule_value.shape[-1] == 1:
             if self.matrix_pose:
                 next_capsule_value = next_capsule_value.view(
-                    next_capsule_value.shape[0],
-                    next_capsule_value.shape[1],
-                    next_capsule_value.shape[2],
-                    next_capsule_value.shape[3],
+                    next_capsule_value.shape[0], next_capsule_value.shape[1],
+                    next_capsule_value.shape[2], next_capsule_value.shape[3],
                     self.out_d_capsules)
                 next_capsule_value = self.nonlinear_act(next_capsule_value)
             else:

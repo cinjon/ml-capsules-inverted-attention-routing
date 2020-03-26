@@ -12,50 +12,40 @@ from PIL import Image
 from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--dest",
-    default="",
-    type=str,
-    help="data dir")
+parser.add_argument("--dest", default="", type=str, help="data dir")
 parser.add_argument(
     "--mnist_folder",
-    default="/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/MNIST/raw",
+    default=
+    "/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/MNIST/raw",
     type=str,
     help="data dir")
-parser.add_argument(
-    "--training",
-    action='store_true',
-    help="generate train set or val set")
-parser.add_argument(
-    "--frame_size",
-    default=64,
-    type=int,
-    help="image size in each frame")
-parser.add_argument(
-    "--num_frames",
-    default=20,
-    type=int,
-    help="number of frame in one sequence")
-parser.add_argument(
-    "--num_images",
-    default=20000,
-    type=int,
-    help="number of sequences")
-parser.add_argument(
-    "--original_size",
-    default=28,
-    type=int,
-    help="size of mnist digit within frame")
-parser.add_argument(
-    "--nums_per_image",
-    default=2,
-    type=int,
-    help="number of mnist digit in one frame")
-parser.add_argument(
-    "--num_single_label",
-    default=2,
-    type=int,
-    help="number of sequences with single digit")
+parser.add_argument("--training",
+                    action='store_true',
+                    help="generate train set or val set")
+parser.add_argument("--frame_size",
+                    default=64,
+                    type=int,
+                    help="image size in each frame")
+parser.add_argument("--num_frames",
+                    default=20,
+                    type=int,
+                    help="number of frame in one sequence")
+parser.add_argument("--num_images",
+                    default=20000,
+                    type=int,
+                    help="number of sequences")
+parser.add_argument("--original_size",
+                    default=28,
+                    type=int,
+                    help="size of mnist digit within frame")
+parser.add_argument("--nums_per_image",
+                    default=2,
+                    type=int,
+                    help="number of mnist digit in one frame")
+parser.add_argument("--num_single_label",
+                    default=2,
+                    type=int,
+                    help="number of sequences with single digit")
 args = parser.parse_args()
 
 
@@ -76,6 +66,7 @@ def arr_from_img(img, mean=0, std=1):
     return (np.asarray(arr, dtype=np.float32).reshape(
         (height, width, c)).transpose(2, 1, 0) / 255. - mean) / std
 
+
 def get_image_from_array(X, mean=0, std=1):
     '''
     Args:
@@ -86,20 +77,20 @@ def get_image_from_array(X, mean=0, std=1):
         Image with dimensions H x W x C or H x W if it's a single channel image
     '''
     c, w, h = X.shape[0], X.shape[1], X.shape[2]
-    ret = (((X + mean) * 255.) * std).reshape(
-        c, w, h).transpose(2, 1, 0).clip(0, 255).astype(np.uint8)
+    ret = (((X + mean) * 255.) * std).reshape(c, w, h).transpose(2, 1, 0).clip(
+        0, 255).astype(np.uint8)
     if c == 1:
         ret = ret.reshape(h, w)
     return ret
 
+
 def download(root, filename):
     filepath = os.path.join(root, filename)
     if not os.path.exists(filepath):
-        download_url(
-            "http://yann.lecun.com/exdb/mnist/" + filename,
-            root=root)
+        download_url("http://yann.lecun.com/exdb/mnist/" + filename, root=root)
 
     return filepath
+
 
 def load_dataset(root, training=True):
     img_filename = "train-images-idx3-ubyte.gz" if training\
@@ -126,9 +117,9 @@ def load_dataset(root, training=True):
 
     return imgs, lbls
 
-def generate_moving_mnist(
-    mnist_folder, training, shape, num_frames, num_images,
-    original_size, nums_per_image, num_single_label):
+
+def generate_moving_mnist(mnist_folder, training, shape, num_frames, num_images,
+                          original_size, nums_per_image, num_single_label):
     width, height = shape
     img_data, lbl_data = load_dataset(mnist_folder, training)
 
@@ -150,14 +141,13 @@ def generate_moving_mnist(
     # Create a dataset of shape of
     # num_frames x num_images x 1 x new_width x new_height
     # Eg: 20 x 10000 x 1 x 64 x 64
-    imgs = np.empty(
-        (num_frames, num_images, 1, width, height), dtype=np.uint8)
+    imgs = np.empty((num_frames, num_images, 1, width, height), dtype=np.uint8)
     lbls = np.zeros((num_images, 10), dtype=np.uint8)
 
     for img_idx in range(num_images):
         # Logging
         if (img_idx + 1) % 100 == 0:
-            print("{}/{}".format(img_idx+1, num_images), end="\r")
+            print("{}/{}".format(img_idx + 1, num_images), end="\r")
 
         # Switch to single label
         if img_idx == num_images - num_single_label:
@@ -172,11 +162,11 @@ def generate_moving_mnist(
                 for direc, speed in zip(direcs, speeds)])
 
         # Pick random categories
-        random_categories = np.random.choice(
-            range(10),
-            nums_per_image,
-            replace=False,
-            p=category_nums/sum(category_nums))
+        random_categories = np.random.choice(range(10),
+                                             nums_per_image,
+                                             replace=False,
+                                             p=category_nums /
+                                             sum(category_nums))
 
         # Assign labels
         for random_category in random_categories:
@@ -196,14 +186,15 @@ def generate_moving_mnist(
             # Get a list containing two PIL images randomly sampled
             # from the database
             img = get_image_from_array(img_data[r])
-            img = Image.fromarray(img).resize(
-                (original_size, original_size), Image.ANTIALIAS)
+            img = Image.fromarray(img).resize((original_size, original_size),
+                                              Image.ANTIALIAS)
             mnist_images.append(img)
 
             # Generate tuples of (x, y) i.e initial positions for
             # nums_per_image (default: 2)
             positions.append(
-                [np.random.rand() * x_lim, np.random.rand() * y_lim])
+                [np.random.rand() * x_lim,
+                 np.random.rand() * y_lim])
 
         positions = np.asarray(positions)
 
@@ -218,8 +209,7 @@ def generate_moving_mnist(
             # Super impose both images on the canvas
             # (i.e empty np array)
             for i, canv in enumerate(canvases):
-                canv.paste(
-                    mnist_images[i], tuple(positions[i].astype(int)))
+                canv.paste(mnist_images[i], tuple(positions[i].astype(int)))
                 canvas += arr_from_img(canv)
 
             # Get the next position by adding velocity
@@ -247,6 +237,7 @@ def generate_moving_mnist(
     # np.random.shuffle(shuffle_indices)
     imgs = imgs.transpose(1, 0, 2, 3, 4)
     return imgs, lbls
+
 
 def main(args):
     img_data, lbl_data = generate_moving_mnist(

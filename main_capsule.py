@@ -75,14 +75,8 @@ parser.add_argument('--weight_decay',
                     default=5e-4,
                     type=float,
                     help='weight decay')
-parser.add_argument('--seed',
-                    default=0,
-                    type=int,
-                    help='random seed')
-parser.add_argument('--epoch',
-                    default=350,
-                    type=int,
-                    help="epoch")
+parser.add_argument('--seed', default=0, type=int, help='random seed')
+parser.add_argument('--epoch', default=350, type=int, help="epoch")
 parser.add_argument('--interactive',
                     action='store_true',
                     help='interactive mode')
@@ -135,7 +129,8 @@ if 'CIFAR' in args.dataset:
     image_dim_size = 32
     loss_func = nn.CrossEntropyLoss()
     predicted_lambda = lambda v: v.max(dim=1)[1]
-    correct_lambda = lambda predicted, targets: predicted.eq(targets).sum().item()
+    correct_lambda = lambda predicted, targets: predicted.eq(targets).sum(
+    ).item()
     total_lambda = lambda targets: targets.size(0)
     num_targets_lambda = lambda targets: targets.size(0)
 elif args.dataset == 'MovingMNist':
@@ -146,16 +141,14 @@ elif args.dataset == 'MovingMNist':
     # root = "/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules"
     train_set = MovingMNist(root=args.data_root, train=True)
     test_set = MovingMNist(root=args.data_root, train=False)
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_set,
-        batch_size=train_batch_size,
-        shuffle=True,
-        num_workers=args.num_workers)
-    test_loader = torch.utils.data.DataLoader(
-        dataset=test_set,
-        batch_size=test_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers)
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=train_batch_size,
+                                               shuffle=True,
+                                               num_workers=args.num_workers)
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=test_batch_size,
+                                              shuffle=False,
+                                              num_workers=args.num_workers)
 
     loss_func = nn.BCEWithLogitsLoss()
     predicted_lambda = lambda v: (torch.sigmoid(v) > 0.5).type(v.dtype)
@@ -164,23 +157,28 @@ elif args.dataset == 'MovingMNist':
     total_lambda = lambda targets: targets.size(0)
     num_targets_lambda = lambda targets: targets.eq(1).sum().item()
 elif args.dataset == 'DiverseMultiMNist':
-    train_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
-    test_batch_size = 128 # 5 * int(args.num_gpus * 128 / 8)
+    train_batch_size = 128  # 5 * int(args.num_gpus * 128 / 8)
+    test_batch_size = 128  # 5 * int(args.num_gpus * 128 / 8)
     image_dim_size = 36
     path = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps'
     train_set = diverse_multi_mnist.DiverseMultiMNist(
         path, train=True, download=True, batch_size=train_batch_size)
-    train_loader = torch.utils.data.DataLoader(
-        train_set, batch_size=train_batch_size, num_workers=args.num_workers)
-    test_set = diverse_multi_mnist.DiverseMultiMNist(
-        path, train=False, download=True, batch_size=test_batch_size)
-    test_loader = torch.utils.data.DataLoader(
-        test_set, batch_size=test_batch_size, num_workers=args.num_workers)
+    train_loader = torch.utils.data.DataLoader(train_set,
+                                               batch_size=train_batch_size,
+                                               num_workers=args.num_workers)
+    test_set = diverse_multi_mnist.DiverseMultiMNist(path,
+                                                     train=False,
+                                                     download=True,
+                                                     batch_size=test_batch_size)
+    test_loader = torch.utils.data.DataLoader(test_set,
+                                              batch_size=test_batch_size,
+                                              num_workers=args.num_workers)
     loss_func = nn.BCEWithLogitsLoss()
     predicted_lambda = lambda v: (torch.sigmoid(v) > 0.5).type(v.dtype)
     # The paper specifies that it is an IFF condition, i.e. predicted equals
     # targets iff they are the same everywhere.
-    correct_lambda = lambda predicted, targets: predicted.eq(targets).all(1).sum().item()
+    correct_lambda = lambda predicted, targets: predicted.eq(targets).all(
+        1).sum().item()
     total_lambda = lambda targets: targets.size(0)
     num_targets_lambda = lambda targets: targets.eq(1).sum().item()
 
@@ -219,7 +217,9 @@ print(net)
 total_params = count_parameters(net)
 print(total_params)
 
-results_dir = os.path.join(args.data_root, "result") # '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
+results_dir = os.path.join(
+    args.data_root,
+    "result")  # '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
 if not os.path.isdir(results_dir) and not args.debug:
     os.mkdir(results_dir)
 
@@ -232,7 +232,6 @@ net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
     # cudnn.benchmark = True
-
 
 if args.resume_dir and not args.debug:
     # Load checkpoint.
@@ -277,23 +276,24 @@ def train(epoch):
         num_targets_total += num_targets
 
         correct += correct_lambda(predicted, targets)
-        true_positive_count = (predicted.eq(targets) & targets.eq(1)).sum().item()
+        true_positive_count = (predicted.eq(targets) &
+                               targets.eq(1)).sum().item()
         true_correct += true_positive_count
 
         if args.interactive:
             s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
-            progress_bar(batch_idx, len(train_loader), s % (
-                train_loss / (batch_idx + 1),
-                100. * correct / total, correct, total,
-                100. * true_correct / num_targets_total,
-                true_correct,
-                num_targets_total))
+            progress_bar(
+                batch_idx, len(train_loader),
+                s % (train_loss / (batch_idx + 1), 100. * correct / total,
+                     correct, total, 100. * true_correct / num_targets_total,
+                     true_correct, num_targets_total))
         else:
-            print("Train Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})".format(
-                epoch, batch_idx+1, len(train_loader), train_loss / (batch_idx+1),
-                100. * correct / total, correct, total,
-                100. * true_correct / num_targets_total, true_correct,
-                num_targets_total))
+            print(
+                "Train Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})"
+                .format(epoch, batch_idx + 1, len(train_loader),
+                        train_loss / (batch_idx + 1), 100. * correct / total,
+                        correct, total, 100. * true_correct / num_targets_total,
+                        true_correct, num_targets_total))
 
     return 100. * correct / total
 
@@ -329,23 +329,25 @@ def test(epoch):
             num_targets_total += num_targets
 
             correct += correct_lambda(predicted, targets)
-            true_positive_count = (predicted.eq(targets) & targets.eq(1)).sum().item()
+            true_positive_count = (predicted.eq(targets) &
+                                   targets.eq(1)).sum().item()
             true_correct += true_positive_count
 
             if args.interactive:
                 s = 'Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
-                progress_bar(batch_idx, len(test_loader), s % (
-                    test_loss / (batch_idx + 1),
-                    100. * correct / total, correct, total,
-                    100. * true_correct / num_targets_total,
-                    true_correct,
-                    num_targets_total))
+                progress_bar(
+                    batch_idx, len(test_loader),
+                    s % (test_loss / (batch_idx + 1), 100. * correct / total,
+                         correct, total, 100. * true_correct /
+                         num_targets_total, true_correct, num_targets_total))
             else:
-                print("Val Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})".format(
-                    epoch, batch_idx+1, len(test_loader), test_loss / (batch_idx+1),
-                    100. * correct / total, correct, total,
-                    100. * true_correct / num_targets_total, true_correct,
-                    num_targets_total))
+                print(
+                    "Val Epoch:{} {}/{} Loss: {:.3f} | Acc: {:.3f}% ({}/{}) | Tp: {:.3f} ({}/{})"
+                    .format(epoch, batch_idx + 1, len(test_loader),
+                            test_loss / (batch_idx + 1), 100. * correct / total,
+                            correct, total,
+                            100. * true_correct / num_targets_total,
+                            true_correct, num_targets_total))
 
     # Save checkpoint.
     acc = 100. * correct / total
@@ -374,8 +376,8 @@ results = {
 total_epochs = args.epoch
 
 if not args.debug:
-    store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
-        str(args.dataset), str(args.num_routing), args.backbone)
+    store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (str(
+        args.dataset), str(args.num_routing), args.backbone)
     store_file = os.path.join(store_dir, store_file)
 
 for epoch in range(start_epoch, start_epoch + total_epochs):

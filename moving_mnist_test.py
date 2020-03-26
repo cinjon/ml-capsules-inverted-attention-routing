@@ -16,18 +16,18 @@ from src.moving_mnist import MovingMNist
 from src import capsule_model
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_root',
-                    default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/',
-                    type=str,
-                    help='root of where to put the data.')
-parser.add_argument('--resume_dir',
-                    default='cd /misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/result/moving_mnist_1',
-                    type=str,
-                    help='dir where we resume from checkpoint')
-parser.add_argument('--subset',
-                    default='train',
-                    type=str,
-                    help='train or val')
+parser.add_argument(
+    '--data_root',
+    default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/',
+    type=str,
+    help='root of where to put the data.')
+parser.add_argument(
+    '--resume_dir',
+    default=
+    'cd /misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/result/moving_mnist_1',
+    type=str,
+    help='dir where we resume from checkpoint')
+parser.add_argument('--subset', default='train', type=str, help='train or val')
 parser.add_argument('--num_routing',
                     default=3,
                     type=int,
@@ -51,11 +51,10 @@ def main():
 
     train = True if args.subset == "train" else False
     dataset = MovingMNist(root=args.data_root, train=train)
-    dataloader = torch.utils.data.DataLoader(
-        dataset=dataset,
-        batch_size=train_batch_size,
-        shuffle=True,
-        num_workers=12)
+    dataloader = torch.utils.data.DataLoader(dataset=dataset,
+                                             batch_size=train_batch_size,
+                                             shuffle=True,
+                                             num_workers=12)
 
     # Lambda
     predicted_lambda = lambda v: (torch.sigmoid(v) > 0.5).type(v.dtype)
@@ -64,23 +63,19 @@ def main():
     # total_lambda = lambda targets: targets.size(0)
     # num_targets_lambda = lambda targets: targets.eq(1).sum().item()
 
-
     # Model parameters
     # print(config)
-    net = capsule_model.CapsModel(
-        image_dim_size,
-        config['params'],
-        "resnet",
-        0,
-        args.num_routing,
-        sequential_routing=args.sequential_routing)
-
+    net = capsule_model.CapsModel(image_dim_size,
+                                  config['params'],
+                                  "resnet",
+                                  0,
+                                  args.num_routing,
+                                  sequential_routing=args.sequential_routing)
 
     net = net.to(device)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
-
 
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
@@ -88,7 +83,6 @@ def main():
     net.load_state_dict(checkpoint['net'])
     # best_acc = checkpoint['acc']
     # start_epoch = checkpoint['epoch']
-
 
     # Testing
     net.eval()
@@ -115,15 +109,13 @@ def main():
         two_label_correct += int((correct_arr & two_label_arr).sum())
         two_label_total += int(two_label_arr.sum())
 
-        print("{}/{} one label: {:.3f}% ({}/{})\t two label: {:.3f}% ({}/{})".format(
-            batch_idx + 1,
-            len(dataloader),
-            100. * one_label_correct / one_label_total,
-            one_label_correct,
-            one_label_total,
-            100. * two_label_correct / two_label_total,
-            two_label_correct,
-            two_label_total))
+        print("{}/{} one label: {:.3f}% ({}/{})\t two label: {:.3f}% ({}/{})".
+              format(batch_idx + 1, len(dataloader),
+                     100. * one_label_correct / one_label_total,
+                     one_label_correct, one_label_total,
+                     100. * two_label_correct / two_label_total,
+                     two_label_correct, two_label_total))
+
 
 if __name__ == "__main__":
     main()

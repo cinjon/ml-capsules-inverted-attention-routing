@@ -37,7 +37,8 @@ class DiverseMultiMNist(IterableDataset):
         if download:
             self.download()
 
-        self._transforms = Compose([ToTensor(), Normalize((0.1307,), (0.3081,))])
+        self._transforms = Compose(
+            [ToTensor(), Normalize((0.1307,), (0.3081,))])
         self._batch_size = batch_size
 
         data_file = self.training_file if train else self.test_file
@@ -108,14 +109,18 @@ class DiverseMultiMNist(IterableDataset):
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if not worker_info:
-            self.my_data_indices = {k: list(range(len(v)))
-                                    for k, v in self.data_by_label.items()}
+            self.my_data_indices = {
+                k: list(range(len(v))) for k, v in self.data_by_label.items()
+            }
         else:
-            per_worker = {k: int(len(v) / worker_info.num_workers)
-                          for k, v in self.data_by_label.items()}
+            per_worker = {
+                k: int(len(v) / worker_info.num_workers)
+                for k, v in self.data_by_label.items()
+            }
             my_id = worker_info.id
-            self.my_data_indices = {k: [v*my_id, v*(my_id + 1)]
-                                    for k, v in per_worker.items()}
+            self.my_data_indices = {
+                k: [v * my_id, v * (my_id + 1)] for k, v in per_worker.items()
+            }
         return self
 
     def __next__(self):

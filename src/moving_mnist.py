@@ -14,18 +14,18 @@ from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
 class NewMovingMNist(Dataset):
-    def __init__(
-        self,
-        root,
-        train=True,
-        dataset_size=120000,
-        sequence=True,
-        width=64,
-        height=64,
-        num_frames=20,
-        original_size=28,
-        nums_per_image=2,
-        chance_single_label=0.2):
+
+    def __init__(self,
+                 root,
+                 train=True,
+                 dataset_size=120000,
+                 sequence=True,
+                 width=64,
+                 height=64,
+                 num_frames=20,
+                 original_size=28,
+                 nums_per_image=2,
+                 chance_single_label=0.2):
 
         self.root = root
         self.dataset_size = dataset_size
@@ -38,9 +38,9 @@ class NewMovingMNist(Dataset):
         self.nums_per_image = nums_per_image
         self.chance_single_label = chance_single_label
 
-        self._transforms = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1397,), (0.3081,))])
+        self._transforms = transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Normalize((0.1397,), (0.3081,))])
 
         if self.train:
             self.load_dataset()
@@ -55,8 +55,7 @@ class NewMovingMNist(Dataset):
             self.y_lim = self.height - self.original_size
             self.lims = (self.x_lim, self.y_lim)
         else:
-            self.lbls = np.load(
-                os.path.join(root, "moving_mnist_lbl_val.npy"))
+            self.lbls = np.load(os.path.join(root, "moving_mnist_lbl_val.npy"))
 
             self.img_folder = os.path.join(root, "val_imgs")
 
@@ -72,8 +71,8 @@ class NewMovingMNist(Dataset):
             # Create a np array of shape of
             # num_frames x 1 x new_width x new_height
             # Eg: 20 x 1 x 64 x 64
-            _imgs = np.empty(
-                (self.num_frames, 1, self.width, self.height), dtype=np.uint8)
+            _imgs = np.empty((self.num_frames, 1, self.width, self.height),
+                             dtype=np.uint8)
             lbls = np.zeros((10,), dtype=np.float32)
 
             # Randomly generate direction, speed and velocity
@@ -85,8 +84,9 @@ class NewMovingMNist(Dataset):
                     for direc, speed in zip(direcs, speeds)])
 
             # Pick random categories
-            random_categories = np.random.choice(
-                range(10), this_nums_per_image, replace=False)
+            random_categories = np.random.choice(range(10),
+                                                 this_nums_per_image,
+                                                 replace=False)
 
             # Assign labels
             lbls[random_categories] = 1.
@@ -106,15 +106,15 @@ class NewMovingMNist(Dataset):
                 # from the database
                 img = get_image_from_array(self.img_data[r])
                 img = Image.fromarray(img).resize(
-                    (self.original_size, self.original_size),
-                    Image.ANTIALIAS)
+                    (self.original_size, self.original_size), Image.ANTIALIAS)
                 mnist_images.append(img)
 
                 # Generate tuples of (x, y) i.e initial positions for
                 # nums_per_image (default: 2)
                 positions.append([
                     np.random.rand() * self.x_lim,
-                    np.random.rand() * self.y_lim])
+                    np.random.rand() * self.y_lim
+                ])
 
             positions = np.asarray(positions)
 
@@ -122,16 +122,15 @@ class NewMovingMNist(Dataset):
             for frame_idx in range(self.num_frames):
                 canvases = [Image.new("L", (self.width, self.height))\
                     for _ in range(this_nums_per_image)]
-                canvas = np.zeros(
-                    (1, self.width, self.height), dtype=np.float32)
+                canvas = np.zeros((1, self.width, self.height),
+                                  dtype=np.float32)
 
                 # In canv (i.e Image object) place the image at the
                 # respective positions
                 # Super impose both images on the canvas
                 # (i.e empty np array)
                 for i, canv in enumerate(canvases):
-                    canv.paste(
-                        mnist_images[i], tuple(positions[i].astype(int)))
+                    canv.paste(mnist_images[i], tuple(positions[i].astype(int)))
                     canvas += arr_from_img(canv)
 
                     # Get the next position by adding velocity
@@ -156,8 +155,8 @@ class NewMovingMNist(Dataset):
                         (canvas * 255.).clip(0, 255).astype(np.uint8)
 
             # Perform transformation
-            imgs = torch.cat([
-                self._transforms(img[0]).unsqueeze(0) for img in _imgs])
+            imgs = torch.cat(
+                [self._transforms(img[0]).unsqueeze(0) for img in _imgs])
 
             # TODO: change num_frames to 1 instead of this to save time
             if not self.sequence:
@@ -165,10 +164,11 @@ class NewMovingMNist(Dataset):
 
         # Validation set
         else:
-            _imgs = np.load(os.path.join(
-                self.img_folder, "{}.npy".format(str(index).zfill(5))))
-            imgs = torch.cat([
-                self._transforms(img[0]).unsqueeze(0) for img in _imgs])
+            _imgs = np.load(
+                os.path.join(self.img_folder,
+                             "{}.npy".format(str(index).zfill(5))))
+            imgs = torch.cat(
+                [self._transforms(img[0]).unsqueeze(0) for img in _imgs])
             if not self.sequence:
                 imgs = imgs[0]
 
@@ -182,7 +182,6 @@ class NewMovingMNist(Dataset):
         else:
             _len = len(self.lbls)
         return _len
-
 
     def load_dataset(self):
         img_filename = "train-images-idx3-ubyte.gz" if self.train\
@@ -208,20 +207,21 @@ class NewMovingMNist(Dataset):
         filepath = os.path.join(self.root, filename)
         if not os.path.exists(filepath):
             print("http://yann.lecun.com/exdb/mnist/" + filename)
-            download_url(
-                "http://yann.lecun.com/exdb/mnist/" + filename, root=self.root)
+            download_url("http://yann.lecun.com/exdb/mnist/" + filename,
+                         root=self.root)
         return filepath
 
 
 class MovingMNist(Dataset):
+
     def __init__(self, root, train=True, sequence=False):
         self.root = root
         self.train = train
         self.sequence = sequence
 
-        self._transforms = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1397,), (0.3081,))])
+        self._transforms = transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Normalize((0.1397,), (0.3081,))])
 
         # Get file name
         if self.train:
@@ -232,10 +232,11 @@ class MovingMNist(Dataset):
             lbl_filename = "moving_mnist_lbl_val.npy"
 
         # Load data
-        self.img_data = np.load(
-            os.path.join(self.root, img_filename)).transpose((1, 0, 2, 3, 4))
-        self.lbl_data = np.load(
-            os.path.join(self.root, lbl_filename)).astype(np.float32)
+        self.img_data = np.load(os.path.join(self.root,
+                                             img_filename)).transpose(
+                                                 (1, 0, 2, 3, 4))
+        self.lbl_data = np.load(os.path.join(self.root,
+                                             lbl_filename)).astype(np.float32)
 
         if self.sequence:
             self.seq_len = self.img_data.shape[1]
@@ -247,11 +248,12 @@ class MovingMNist(Dataset):
         # Return a seuqnece
         if self.sequence:
             # Get random frame
-            frame_num = random.choice(range(self.seq_len-1))
+            frame_num = random.choice(range(self.seq_len - 1))
 
             # Process frames
             this_frame = self._transforms(self.img_data[index, frame_num, 0])
-            next_frame = self._transforms(self.img_data[index, frame_num+1, 0])
+            next_frame = self._transforms(self.img_data[index, frame_num + 1,
+                                                        0])
 
             return this_frame, next_frame
 
@@ -264,6 +266,7 @@ class MovingMNist(Dataset):
     def __len__(self):
         return len(self.img_data)
 
+
 def MovingMNist_sequence_collate(batch):
     frame1 = torch.stack([item[0] for item in batch if item[2]])
     frame2 = torch.stack([item[1] for item in batch if item[2]])
@@ -271,6 +274,7 @@ def MovingMNist_sequence_collate(batch):
 
 
 class affNIST(Dataset):
+
     def __init__(self, root, train, subset=False, transform=None):
         self.root = root
         self.train = train
@@ -294,14 +298,15 @@ class affNIST(Dataset):
         for path in self.paths:
             data_arr = loadmat(path)["affNISTdata"][0, 0]
             self.lbls.append(data_arr[5].flatten())
-            self.imgs.append(
-                data_arr[2].transpose((1, 0)).reshape((-1, 40, 40)))
+            self.imgs.append(data_arr[2].transpose((1, 0)).reshape(
+                (-1, 40, 40)))
 
         self.imgs = np.concatenate(self.imgs)
         self.lbls = np.concatenate(self.lbls)
 
     def __getitem__(self, index):
-        img = self.imgs[index] if self.transform == None else self.transform(self.imgs[index])
+        img = self.imgs[index] if self.transform == None else self.transform(
+            self.imgs[index])
         lbl = self.lbls[index]
         return img, lbl
 
@@ -325,6 +330,7 @@ def arr_from_img(img, mean=0, std=1):
     return (np.asarray(arr, dtype=np.float32).reshape(
         (height, width, c)).transpose(2, 1, 0) / 255. - mean) / std
 
+
 def get_image_from_array(X, mean=0, std=1):
     '''
     Args:
@@ -335,8 +341,8 @@ def get_image_from_array(X, mean=0, std=1):
         Image with dimensions H x W x C or H x W if it's a single channel image
     '''
     c, w, h = X.shape[0], X.shape[1], X.shape[2]
-    ret = (((X + mean) * 255.) * std).reshape(
-        c, w, h).transpose(2, 1, 0).clip(0, 255).astype(np.uint8)
+    ret = (((X + mean) * 255.) * std).reshape(c, w, h).transpose(2, 1, 0).clip(
+        0, 255).astype(np.uint8)
     if c == 1:
         ret = ret.reshape(h, w)
     return ret
