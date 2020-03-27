@@ -1,7 +1,7 @@
 """
 
 Sample Command:
-python moving_mnist_sequence_train.py --criterion xent --results_dir /.../resnick/vidcaps/results \
+python moving_mnist_sequence_train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
 --debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
 --config resnet_backbone_movingmnist2
 """
@@ -79,7 +79,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     if criterion == 'nce':
         averages['pos_sim'] = Averager()
         averages['neg_sim'] = Averager()
-    elif criterion == 'xent':
+    elif criterion == 'bce':
         averages['true_pos'] = Averager()
         averages['num_targets'] = Averager()
         true_positive_total = 0
@@ -101,9 +101,9 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
                 positive_distance, negative_distance
             )
-        elif criterion == 'xent':
+        elif criterion == 'bce':
             labels = labels.to(device)
-            loss, stats = net.get_xent_loss(images, labels)
+            loss, stats = net.get_bce_loss(images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
             num_targets_total += stats['num_targets']
@@ -126,7 +126,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
 
         if batch_idx % 100 == 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-            print(log_text.format(epoch, batch_idx, len(loader),
+            print(log_text.format(epoch+1, batch_idx, len(loader),
                                   time.time() - t, averages['loss'].item())
             )
             t = time.time()
@@ -135,7 +135,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     return train_loss
 
 
-def test(epoch, net, criterion, loader, args, best_negative_distance, device):
+def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
     print('\n***\nStarted test on epoch %d.\n***\n' % epoch)
 
     net.eval()
@@ -148,7 +148,7 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device):
     if criterion == 'nce':
         averages['pos_sim'] = Averager()
         averages['neg_sim'] = Averager()
-    elif criterion == 'xent':
+    elif criterion == 'bce':
         averages['true_pos'] = Averager()
         averages['num_targets'] = Averager()
         true_positive_total = 0
@@ -170,9 +170,9 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device):
                 extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
                     positive_distance, negative_distance
                 )
-            elif criterion == 'xent':
+            elif criterion == 'bce':
                 labels = labels.to(device)
-                loss, stats = net.get_xent_loss(images, labels)
+                loss, stats = net.get_bce_loss(images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
                 num_targets_total += stats['num_targets']
@@ -191,12 +191,12 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device):
 
             if batch_idx % 100 == 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-                print(log_text.format(epoch, batch_idx, len(loader),
+                print(log_text.format(epoch + 1, batch_idx, len(loader),
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
 
-    test_loss = averages['loss'].item()
+        test_loss = averages['loss'].item()
 
     # Save checkpoint.
     state = {
@@ -206,13 +206,11 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device):
         'epoch': epoch,
         'loss': test_loss
     }
-    if total_negative_distance > best_negative_distance:
-        print('Total Neg Distance better than before.')
-        if not args.debug:
-            torch.save(state, os.path.join(store_dir, 'ckpt.pth'))
-        best_negative_distance = total_negative_distance
-    elif not args.debug and epoch % 20 == 0:
-        torch.save(state, os.path.join(store_dir, 'ckpt.%d.pth' % epoch))
+
+    if not store_dir:
+        print('Do not have store_dir!')
+    elif not args.debug:
+        torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
 
     return test_loss, total_negative_distance
 
@@ -254,6 +252,7 @@ def main(args):
                               weight_decay=args.weight_decay)
 
     if args.use_scheduler:
+        # CIFAR used milestones of [150, 250] with gamma of 0.1
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                          milestones=[150, 250],
                                                          gamma=0.1)
@@ -298,7 +297,7 @@ def main(args):
         )
         store_file = os.path.join(store_dir, store_file)
 
-    # test_loss, total_negative_distance = test(0, net, args.criterion, test_loader, args, best_negative_distance, device)
+    # test_loss, total_negative_distance = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
         results['train_loss'].append(train_loss)
@@ -306,7 +305,7 @@ def main(args):
         if scheduler:
             scheduler.step()
 
-        test_loss, total_negative_distance = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device)
+        test_loss, total_negative_distance = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
         best_negative_distance = max(best_negative_distance, total_negative_distance)
         results['test_loss'].append(test_loss)
 
@@ -381,7 +380,7 @@ if __name__ == '__main__':
     parser.add_argument('--criterion',
                         default='triplet',
                         type=str,
-                        help='triplet, nce, or xent.')
+                        help='triplet, nce, or bce.')
     parser.add_argument('--nce_positive_frame_num',
                         default=10,
                         type=int,
@@ -397,6 +396,10 @@ if __name__ == '__main__':
     parser.add_argument('--use_scheduler',
                         action='store_true',
                         help='whether to use the scheduler or not.')
+    parser.add_argument('--schedule_milestones', type=str, default='150,250',
+                        help='the milestones in the LR.')
+    parser.add_argument('--schedule_gamma', type=float, default=0.1,
+                        help='the default LR gamma.')
 
     args = parser.parse_args()
     assert args.num_routing > 0

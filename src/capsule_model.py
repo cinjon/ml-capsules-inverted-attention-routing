@@ -37,7 +37,8 @@ class CapsModel(nn.Module):
             self.pre_caps = layers.simple_backbone(
                 params['backbone']['input_dim'],
                 params['backbone']['output_dim'],
-                params['backbone']['kernel_size'], params['backbone']['stride'],
+                params['backbone']['kernel_size'],
+                params['backbone']['stride'],
                 params['backbone']['padding'])
         elif backbone == 'resnet':
             self.pre_caps = layers.resnet_backbone(
@@ -203,7 +204,7 @@ class CapsModel(nn.Module):
 
         return out
 
-    def get_xent_loss(self, images, labels):
+    def get_bce_loss(self, images, labels):
         images = images[:, 0, :, :, :]
         output = self(images, return_embedding=False)
         loss = nn.BCEWithLogitsLoss()(output, labels)
