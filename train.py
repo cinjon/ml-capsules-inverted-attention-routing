@@ -62,12 +62,31 @@ def get_loaders(args):
                                                   batch_size=args.batch_size,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
+    elif args.dataset == 'mnist':
+        train_set = torchvision.datasets.MNIST(
+            args.data_root, train=True, download=True,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+        test_set = torchvision.datasets.MNIST(
+            args.data_root, train=False,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=True)
     return train_loader, test_loader
 
 
 # Training
 def train(epoch, net, optimizer, criterion, loader, args, device):
-    print('\n***\nStarted training on epoch %d.\n***\n' % epoch)
+    print('\n***\nStarted training on epoch %d.\n***\n' % (epoch+1))
 
     net.train()
     total_positive_distance = 0.
@@ -84,6 +103,8 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
+    elif criterion == 'xent':
+        averages['accuracy'] = Averager()
 
     t = time.time()
     optimizer.zero_grad()
@@ -119,6 +140,15 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
                 averages['pos_sim'].item(), averages['neg_sim'].item()
             )
+        elif criterion == 'xent':
+            labels = labels.to(device)
+            loss, stats = net.get_xent_loss(images, labels)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                averages[key].add(value)
+            extra_s = 'Acc: {:.5f}.'.format(
+                averages['accuracy'].item()
+            )
             
         loss.backward()
         optimizer.step()
@@ -136,7 +166,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
 
 
 def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
-    print('\n***\nStarted test on epoch %d.\n***\n' % epoch)
+    print('\n***\nStarted test on epoch %d.\n***\n' % (epoch+1))
 
     net.eval()
     total_positive_distance = 0.
@@ -153,6 +183,8 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
+    elif criterion == 'xent':
+        averages['accuracy'] = Averager()
 
     t = time.time()
     with torch.no_grad():
@@ -187,6 +219,15 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     averages[key].add(value)
                 extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
                     averages['pos_sim'].item(), averages['neg_sim'].item()
+                )
+            elif criterion == 'xent':
+                labels = labels.to(device)
+                loss, stats = net.get_xent_loss(images, labels)
+                averages['loss'].add(loss.item())                
+                for key, value in stats.items():
+                    averages[key].add(value)
+                extra_s = 'Acc: {:.5f}.'.format(
+                    averages['accuracy'].item()
                 )
 
             if batch_idx % 100 == 0:
@@ -380,7 +421,7 @@ if __name__ == '__main__':
     parser.add_argument('--criterion',
                         default='triplet',
                         type=str,
-                        help='triplet, nce, or bce.')
+                        help='triplet, nce, bce, or xent.')
     parser.add_argument('--nce_positive_frame_num',
                         default=10,
                         type=int,

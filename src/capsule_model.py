@@ -137,7 +137,7 @@ class CapsModel(nn.Module):
         # dmm u.shape: [64, 1024, 8, 8]
         u = u.permute(0, 2, 3, 1)
         u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
-                   self.pc_num_caps, self.pc_caps_dim)  # 100, 14, 14, 32, 16
+                   self.pc_num_caps, self.pc_caps_dim) # 100, 14, 14, 32, 16
         u = u.permute(0, 3, 1, 2, 4)  # 100, 32, 14, 14, 16
         init_capsule_value = self.nonlinear_act(u)  #capsule_utils.squash(u)
 
@@ -216,6 +216,16 @@ class CapsModel(nn.Module):
         stats = {
             'true_pos': true_positive_count,
             'num_targets': num_targets 
+        }
+        return loss, stats
+
+    def get_xent_loss(self, images, labels):
+        output = self(images, return_embedding=False)
+        loss = F.cross_entropy(output, labels)
+        predictions = torch.argmax(output, dim=1)
+        accuracy = (predictions == labels).float().mean().item()
+        stats = {
+            'accuracy': accuracy,            
         }
         return loss, stats
 
