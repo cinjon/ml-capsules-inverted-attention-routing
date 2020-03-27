@@ -8,3 +8,4 @@ from . import resnet_backbone_diversemultimnist
 from . import resnet_backbone_movingmnist
 from . import resnet_backbone_movingmnist2
 from . import resnet_backbone_mnist
+from . import resnet_backbone_affnist
