@@ -24,8 +24,8 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
-from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
+from src.affnist import AffNist
 
 
 class Averager():
@@ -42,42 +42,40 @@ class Averager():
         return self.v
 
 
-def count_parameters(model):
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(name, param.numel())
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 def get_loaders(args):
-    if args.dataset == 'MovingMNist':        
-        train_set = MovingMNist(args.data_root, train=True, sequence=True)
-        test_set = MovingMNist(args.data_root, train=False, sequence=True)
-        
-        train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers)
-        test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                                  batch_size=args.batch_size,
-                                                  shuffle=False,
-                                                  num_workers=args.num_workers)
-    elif args.dataset == 'mnist':
+    mnist_root = os.path.join(args.data_root, 'mnist')
+    affnist_root = os.path.join(args.data_root, 'affnist')
+    mnist_transforms = [
+        transforms.Resize(args.resize_data),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ]
+
+    if args.dataset == 'affnist':
         train_set = torchvision.datasets.MNIST(
-            args.data_root, train=True, download=True,
+            mnist_root, train=True, download=True,
+            transform=transforms.Compose(mnist_transforms)
+        )
+        # test set is affnist and train set is mnist.
+        test_set = AffNist(
+            affnist_root, train=False,
             transform=transforms.Compose([
-                transforms.Resize(40),
                 transforms.ToTensor(),
                 transforms.Normalize((0.1307,), (0.3081,))
             ])
         )
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=False)
+    elif args.dataset == 'mnist':
+        train_set = torchvision.datasets.MNIST(
+            mnist_root, train=True, download=True,
+            transform=transforms.Compose(mnist_transforms)
+        )
         test_set = torchvision.datasets.MNIST(
-            args.data_root, train=False,
-            transform=transforms.Compose([
-                transforms.Resize(40),
-                transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,))
-            ])
+            mnist_root, train=False,
+            transform=transforms.Compose(mnist_transforms)
         )
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
@@ -91,16 +89,11 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     print('\n***\nStarted training on epoch %d.\n***\n' % (epoch+1))
 
     net.train()
-    total_positive_distance = 0.
-    total_negative_distance = 0.
 
     averages = {
         'loss': Averager()
     }
-    if criterion == 'nce':
-        averages['pos_sim'] = Averager()
-        averages['neg_sim'] = Averager()
-    elif criterion == 'bce':
+    if criterion == 'bce':
         averages['true_pos'] = Averager()
         averages['num_targets'] = Averager()
         true_positive_total = 0
@@ -112,20 +105,9 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     optimizer.zero_grad()
     for batch_idx, (images, labels) in enumerate(loader):
         images = images.to(device)
+        labels = labels.to(device)
 
-        if criterion == 'triplet':
-            # NOTE: Zeping.
-            loss, stats = net.get_triplet_loss(images)
-            averages['loss'].add(loss.item())
-            positive_distance = stats['positive_distance']
-            negative_distance = stats['negative_distance']
-            total_positive_distance += positive_distance
-            total_negative_distance += negative_distance
-            extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
-                positive_distance, negative_distance
-            )
-        elif criterion == 'bce':
-            labels = labels.to(device)
+        if criterion == 'bce':
             loss, stats = net.get_bce_loss(images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
@@ -134,14 +116,6 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
                 100. * true_positive_total / num_targets_total,
                 true_positive_total, num_targets_total
             )            
-        elif criterion == 'nce':
-            loss, stats = net.get_nce_loss(images, args)
-            averages['loss'].add(loss.item())
-            for key, value in stats.items():
-                averages[key].add(value)
-            extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
-                averages['pos_sim'].item(), averages['neg_sim'].item()
-            )
         elif criterion == 'xent':
             labels = labels.to(device)
             loss, stats = net.get_xent_loss(images, labels)
@@ -151,7 +125,9 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             extra_s = 'Acc: {:.5f}.'.format(
                 averages['accuracy'].item()
             )
-            
+
+        # print('MCH bias: ', net.mnist_classifier_head.bias)
+        # print('CL2: ', net.capsule_layers[2].w[0, 0, 0])
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -167,20 +143,14 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     return train_loss
 
 
-def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
+def test(epoch, net, criterion, loader, args, device, store_dir=None):
     print('\n***\nStarted test on epoch %d.\n***\n' % (epoch+1))
 
     net.eval()
-    total_positive_distance = 0.
-    total_negative_distance = 0.
-
     averages = {
         'loss': Averager()
     }
-    if criterion == 'nce':
-        averages['pos_sim'] = Averager()
-        averages['neg_sim'] = Averager()
-    elif criterion == 'bce':
+    if criterion == 'bce':
         averages['true_pos'] = Averager()
         averages['num_targets'] = Averager()
         true_positive_total = 0
@@ -192,20 +162,9 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(loader):
             images = images.to(device)
+            labels = labels.to(device)
 
-            if criterion == 'triplet':
-                # NOTE: Zeping.
-                loss, stats = net.get_triplet_loss(images)
-                averages['loss'].add(loss.item())
-                positive_distance = stats['positive_distance']
-                negative_distance = stats['negative_distance']
-                total_positive_distance += positive_distance
-                total_negative_distance += negative_distance
-                extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
-                    positive_distance, negative_distance
-                )
-            elif criterion == 'bce':
-                labels = labels.to(device)
+            if criterion == 'bce':
                 loss, stats = net.get_bce_loss(images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
@@ -214,14 +173,6 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     100. * true_positive_total / num_targets_total,
                     true_positive_total, num_targets_total
                 )            
-            elif criterion == 'nce':
-                loss, stats = net.get_nce_loss(images, args)
-                averages['loss'].add(loss.item())
-                for key, value in stats.items():
-                    averages[key].add(value)
-                extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
-                    averages['pos_sim'].item(), averages['neg_sim'].item()
-                )
             elif criterion == 'xent':
                 labels = labels.to(device)
                 loss, stats = net.get_xent_loss(images, labels)
@@ -244,12 +195,9 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
     # Save checkpoint.
     state = {
         'net': net.state_dict(),
-        'total_positive_distance': total_positive_distance,
-        'total_negative_distance': total_negative_distance,
         'epoch': epoch,
         'loss': test_loss
     }
-
     if not store_dir:
         print('Do not have store_dir!')
     elif not args.debug:
@@ -277,11 +225,22 @@ def main(args):
     train_loader, test_loader = get_loaders(args)
 
     print('==> Building model..')
-    net = capsule_model.CapsModel(config['params'],
-                                  args.backbone,
-                                  args.dp,
-                                  args.num_routing,
-                                  sequential_routing=args.sequential_routing)
+    sequential_routing = args.sequential_routing
+    if args.test_only:
+        # Use this for models that already trained with discrimative loss.
+        net = capsule_model.CapsModel(config['params'],
+                                      args.backbone,
+                                      args.dp,
+                                      args.num_routing,
+                                      sequential_routing=sequential_routing)
+    elif args.dataset in ['mnist', 'affnist']:
+        # Use this for models that need to a linear classifier trained on top.
+        net = capsule_model.CapsModel(config['params'],
+                                      args.backbone,
+                                      args.dp,
+                                      args.num_routing,
+                                      sequential_routing=sequential_routing,
+                                      mnist_classifier_head=True)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -294,19 +253,20 @@ def main(args):
                               momentum=0.9,
                               weight_decay=args.weight_decay)
 
-    if args.use_scheduler:
-        # CIFAR used milestones of [150, 250] with gamma of 0.1
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                         milestones=[150, 250],
-                                                         gamma=0.1)
-    else:
-        scheduler = None
-
-    total_params = count_parameters(net)
-    print('Total Params %d' % total_params)
-
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-    store_dir = os.path.join(args.results_dir, today)
+    if args.test_only:
+        store_dir = os.path.join(
+            args.resume_dir,
+            'test-%s' % args.dataset,
+            'ckpt%d' % args.checkpoint_epoch
+        )
+    else:
+        store_dir = os.path.join(
+            args.resume_dir,
+            'linpred-%s' % args.dataset,
+            'ckpt%d' % args.checkpoint_epoch
+        )
+
     if not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
@@ -316,17 +276,23 @@ def main(args):
             net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
 
-    best_negative_distance = 0
-    if args.resume_dir and not args.debug:
-        # Load checkpoint.
-        print('==> Resuming from checkpoint..')
-        checkpoint = torch.load(os.path.join(args.resume_dir, 'ckpt.pth'))
-        net.load_state_dict(checkpoint['net'])
-        best_negative_distance = checkpoint.get('best_negative_distance', 0)
-        start_epoch = checkpoint['epoch']
+    # Load checkpoint.
+    print('==> Resuming from checkpoint..')
+    checkpoint = torch.load(
+        os.path.join(args.resume_dir, 'ckpt.epoch%d.pth' % args.checkpoint_epoch)
+    )
+    state_dict = checkpoint['net']
+    if args.test_only:
+        net.load_state_dict(state_dict)
+    else:
+        curr_state_dict = net.state_dict()
+        curr_state_dict.update(state_dict)
+        net.load_state_dict(curr_state_dict)
+        for name, param in net.named_parameters():
+            if 'mnist_classifier' not in name:
+                param.requires_grad = False
 
     results = {
-        'total_params': total_params,
         'args': args,
         'params': config['params'],
         'train_loss': [],
@@ -340,15 +306,25 @@ def main(args):
         )
         store_file = os.path.join(store_dir, store_file)
 
-    # test_loss, total_negative_distance = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+    if args.test_only:
+        test_loss = test(0, net, args.criterion, test_loader, args, device, store_dir=store_dir)
+        print('Test Loss: ', test_loss)
+
+        results['test_loss'].append(test_loss)
+        if not args.debug:
+            with open(store_file, 'wb') as f:
+                pickle.dump(results, f)
+
+        return 
+
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
         results['train_loss'].append(train_loss)
 
-        if scheduler:
-            scheduler.step()
+        # if scheduler:
+        #     scheduler.step()
 
-        test_loss = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+        test_loss = test(epoch, net, args.criterion, test_loader, args, device, store_dir=store_dir)
         results['test_loss'].append(test_loss)
 
         if not args.debug:
@@ -371,9 +347,9 @@ if __name__ == '__main__':
                         type=int,
                         help='number of routing. Recommended: 0,1,2,3.')
     parser.add_argument('--dataset',
-                        default='MovingMNist',
+                        default='mnist',
                         type=str,
-                        help='dataset. so far only MovingMNist.')
+                        help='mnist or affnist.')
     parser.add_argument('--backbone',
                         default='resnet',
                         type=str,
@@ -383,8 +359,6 @@ if __name__ == '__main__':
                                  'data/MovingMNist'),
                         type=str,
                         help='root of where to put the data.')
-    parser.add_argument('--results_dir', type=str, default='./contrastive_results',
-                        help='whether to store the results')
     parser.add_argument('--num_workers',
                         default=2,
                         type=int,
@@ -423,25 +397,12 @@ if __name__ == '__main__':
                         default='triplet',
                         type=str,
                         help='triplet, nce, bce, or xent.')
-    parser.add_argument('--nce_positive_frame_num',
-                        default=10,
-                        type=int,
-                        help='the # of frames from anchor to use as positive.')
-    parser.add_argument('--nce_temperature',
-                        default=1.0,
-                        type=float,
-                        help='temperature to multiply with the similarity')
-    parser.add_argument('--use_random_anchor_frame',
-                        default=False,
+    parser.add_argument('--test_only',
                         action='store_true',
-                        help='whether to use a random anchor frame')
-    parser.add_argument('--use_scheduler',
-                        action='store_true',
-                        help='whether to use the scheduler or not.')
-    parser.add_argument('--schedule_milestones', type=str, default='150,250',
-                        help='the milestones in the LR.')
-    parser.add_argument('--schedule_gamma', type=float, default=0.1,
-                        help='the default LR gamma.')
+                        help='whether we are only testing and not training. e.g. testing mnist discrimative on affnist.')
+    parser.add_argument('--checkpoint_epoch', type=int, help='which epoch to use.')
+    parser.add_argument('--resize_data', type=int, default=40,
+                        help='to what to resize the data.')
 
     args = parser.parse_args()
     assert args.num_routing > 0

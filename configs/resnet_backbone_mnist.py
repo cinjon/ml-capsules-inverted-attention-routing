@@ -1,3 +1,4 @@
+"""This is for mnist resized to be 40x40 (so we can do it on affnist)."""
 config = {
     'params': {
         "backbone": {
@@ -15,7 +16,7 @@ config = {
             "caps_dim": 36,  # output dim is 1024 = num_caps * caps_dim
             "num_caps": 16,
             "padding": 0,
-            "out_img_size": 6
+            "out_img_size": 9,
         },
         "capsules": [{
             "type": "CONV",
@@ -24,7 +25,7 @@ config = {
             "kernel_size": 3,
             "stride": 1,
             "matrix_pose": True,
-            "out_img_size": 4,
+            "out_img_size": 7,
         }, {
             "type": "FC",
             "num_caps": 10,

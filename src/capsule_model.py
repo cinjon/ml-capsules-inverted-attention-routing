@@ -19,7 +19,9 @@ class CapsModel(nn.Module):
                  backbone,
                  dp,
                  num_routing,
-                 sequential_routing=True):
+                 sequential_routing=True,
+                 mnist_classifier_head=False,
+    ):
         super(CapsModel, self).__init__()
         #### Parameters
         self.sequential_routing = sequential_routing
@@ -127,6 +129,10 @@ class CapsModel(nn.Module):
         # different classifier for different capsules
         #self.final_fc = nn.Parameter(torch.randn(params['class_capsules']['num_caps'], params['class_capsules']['caps_dim']))
 
+        self.get_mnist_head = mnist_classifier_head
+        if mnist_classifier_head:
+            self.mnist_classifier_head = nn.Linear(params['class_capsules']['caps_dim'], 1)
+
     def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=True, flatten=False):
         #### Forward Pass
         ## Backbone (before capsule)
@@ -192,6 +198,8 @@ class CapsModel(nn.Module):
                 return out.view(out.size(0), -1)
             else:
                 return out
+        elif self.get_mnist_head:
+            out = self.mnist_classifier_head(out).squeeze()
         else:
             # so the last one, out, is [64, 10, 64].
             out = self.final_fc(out)  # fixed classifier for all capsules
