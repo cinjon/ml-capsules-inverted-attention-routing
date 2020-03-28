@@ -1,7 +1,7 @@
 """
 
 Sample Command:
-python moving_mnist_sequence_train.py --criterion xent --resume_dir /.../resnick/vidcaps/results/cfgmnist-xent-nroute1/2020-03-27-10-49-05 \
+python linpred_train.py --criterion xent --resume_dir /.../resnick/vidcaps/results/cfgmnist-xent-nroute1/2020-03-27-10-49-05 \
 --debug --data_root /.../resnick/vidcaps --batch_size 32 --num_routing 1
 --dataset affnist --test_only --debug --checkpoint_epoch 2 --config resnet_backbone_mnist
 """
