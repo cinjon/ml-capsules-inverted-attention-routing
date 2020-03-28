@@ -127,8 +127,8 @@ config = getattr(configs, args.config).config
 
 path = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data'
 if args.dataset == 'MNist':
-    train_batch_size = 64
-    test_batch_size = 64
+    train_batch_size = 32 # 64
+    test_batch_size = 128
     image_dim_size = 40
     train_set = MNIST(
         path,
@@ -197,7 +197,7 @@ elif args.dataset == 'MovingMNist':
 affnist_test_set = AffNist(
     os.path.join(path, 'affNIST'),
     train=False,
-    subset=True,
+    subset=False,
     transform=transforms.Compose([
         # transforms.ToPILImage(),
         # transforms.Pad(12),
@@ -416,7 +416,7 @@ def affnist_test(epoch):
 
             if args.interactive:
                 s = 'affNIST Loss: %.3f | Acc: %.3f%% (%d/%d) | Tp: %.3f (%d / %d)'
-                progress_bar(batch_idx, len(test_loader), s % (
+                progress_bar(batch_idx, len(affnist_test_loader), s % (
                     test_loss / (batch_idx + 1),
                     100. * correct / total, correct, total,
                     100. * true_correct / num_targets_total,
@@ -461,12 +461,19 @@ if not args.debug:
         str(args.dataset), str(args.num_routing), args.backbone)
     store_file = os.path.join(store_dir, store_file)
 
+print('Running affnist before starting.')
+# print(affnist_test(0))
 for epoch in range(start_epoch, start_epoch + total_epochs):
     results['train_acc'].append(train(epoch))
 
     lr_decay.step()
-    results['test_acc'].append(test(epoch))
-    results['affnist_test_acc'].append(affnist_test(epoch))
+    test_acc = test(epoch)
+    results['test_acc'].append(test_acc)
+    print('Test ACc: ', test_acc)
+    if test_acc > 98.:
+        print('Running Affnist ...')
+        results['affnist_test_acc'].append(affnist_test(epoch))
+
     if not args.debug:
         pickle.dump(results, open(store_file, 'wb'))
 # -
