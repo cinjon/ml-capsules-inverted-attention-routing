@@ -1,9 +1,9 @@
 """
 
 Sample Command:
-python moving_mnist_sequence_train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
+python moving_mnist_sequence_train.py --criterion xent --resume_dir /.../resnick/vidcaps/results \
 --debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
---config resnet_backbone_movingmnist2
+--config resnet_backbone_mnist
 """
 
 import os
@@ -45,8 +45,16 @@ class Averager():
 def get_loaders(args):
     mnist_root = os.path.join(args.data_root, 'mnist')
     affnist_root = os.path.join(args.data_root, 'affnist')
-    mnist_transforms = [
-        transforms.Resize(args.resize_data),
+    mnist_train_transforms = [
+        transforms.Pad(12),
+        transforms.RandomCrop(40),
+        # transforms.Resize(args.resize_data),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ]
+    mnist_test_transforms = [
+        transforms.Pad(6),
+        # transforms.Resize(args.resize_data),
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
     ]
@@ -54,7 +62,7 @@ def get_loaders(args):
     if args.dataset == 'affnist':
         train_set = torchvision.datasets.MNIST(
             mnist_root, train=True, download=True,
-            transform=transforms.Compose(mnist_transforms)
+            transform=transforms.Compose(mnist_train_transforms)
         )
         # test set is affnist and train set is mnist.
         test_set = AffNist(
@@ -71,11 +79,11 @@ def get_loaders(args):
     elif args.dataset == 'mnist':
         train_set = torchvision.datasets.MNIST(
             mnist_root, train=True, download=True,
-            transform=transforms.Compose(mnist_transforms)
+            transform=transforms.Compose(mnist_train_transforms)
         )
         test_set = torchvision.datasets.MNIST(
             mnist_root, train=False,
-            transform=transforms.Compose(mnist_transforms)
+            transform=transforms.Compose(mnist_test_transforms)
         )
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
