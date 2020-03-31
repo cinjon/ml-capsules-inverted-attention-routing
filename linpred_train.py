@@ -59,37 +59,29 @@ def get_loaders(args):
         transforms.Normalize((0.1307,), (0.3081,))
     ]
 
-    if args.dataset == 'affnist':
-        train_set = torchvision.datasets.MNIST(
-            mnist_root, train=True, download=True,
-            transform=transforms.Compose(mnist_train_transforms)
-        )
-        # test set is affnist and train set is mnist.
-        test_set = AffNist(
-            affnist_root, train=False,
-            transform=transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,))
-            ])
-        )
-        train_loader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=args.batch_size, shuffle=False)
-    elif args.dataset == 'mnist':
-        train_set = torchvision.datasets.MNIST(
-            mnist_root, train=True, download=True,
-            transform=transforms.Compose(mnist_train_transforms)
-        )
-        test_set = torchvision.datasets.MNIST(
-            mnist_root, train=False,
-            transform=transforms.Compose(mnist_test_transforms)
-        )
-        train_loader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=args.batch_size, shuffle=True)
-    return train_loader, test_loader
+    train_set = torchvision.datasets.MNIST(
+        mnist_root, train=True, download=True,
+        transform=transforms.Compose(mnist_train_transforms)
+    )
+    affnist_test_set = AffNist(
+        affnist_root, train=False,
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+    )
+    test_set = torchvision.datasets.MNIST(
+        mnist_root, train=False,
+        transform=transforms.Compose(mnist_test_transforms)
+    )
+
+    train_loader = torch.utils.data.DataLoader(
+        train_set, batch_size=args.batch_size, shuffle=True)
+    affnist_loader = torch.utils.data.DataLoader(
+        affnist_test_set, batch_size=256, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(
+        test_set, batch_size=128, shuffle=True)
+    return train_loader, test_loader, affnist_loader
 
 
 # Training
@@ -148,7 +140,8 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             t = time.time()
             
     train_loss = averages['loss'].item()
-    return train_loss
+    train_acc = averages['accuracy'].item()
+    return train_loss, train_acc
 
 
 def test(epoch, net, criterion, loader, args, device, store_dir=None):
@@ -199,6 +192,7 @@ def test(epoch, net, criterion, loader, args, device, store_dir=None):
                 t = time.time()
 
         test_loss = averages['loss'].item()
+        test_acc = averages['accuracy'].item()
 
     # Save checkpoint.
     state = {
@@ -211,7 +205,7 @@ def test(epoch, net, criterion, loader, args, device, store_dir=None):
     elif not args.debug:
         torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
 
-    return test_loss
+    return test_loss, test_acc
 
 
 def main(args):
@@ -230,7 +224,7 @@ def main(args):
     config = getattr(configs, args.config).config
     print(config)
 
-    train_loader, test_loader = get_loaders(args)
+    train_loader, test_loader, affnist_loader = get_loaders(args)
 
     print('==> Building model..')
     sequential_routing = args.sequential_routing
@@ -291,7 +285,10 @@ def main(args):
     )
     state_dict = checkpoint['net']
     if args.test_only:
+        print('Loading from state dict ...')
+        print(net.pre_caps.pre_caps[1].bias)
         net.load_state_dict(state_dict)
+        print(net.pre_caps.pre_caps[1].bias)
     else:
         curr_state_dict = net.state_dict()
         curr_state_dict.update(state_dict)
@@ -315,10 +312,13 @@ def main(args):
         store_file = os.path.join(store_dir, store_file)
 
     if args.test_only:
-        test_loss = test(0, net, args.criterion, test_loader, args, device, store_dir=store_dir)
-        print('Test Loss: ', test_loss)
-
+        test_loss, test_acc = test(0, net, args.criterion, test_loader, args, device, store_dir=store_dir)
+        print('Test Acc: ', test_acc)
         results['test_loss'].append(test_loss)
+
+        affnist_test_loss, affnist_test_acc = test(0, net, args.criterion, affnist_loader, args, device, store_dir=store_dir)
+        print('Affnist Test Acc: ', affnist_test_acc)
+
         if not args.debug:
             with open(store_file, 'wb') as f:
                 pickle.dump(results, f)
@@ -326,13 +326,13 @@ def main(args):
         return 
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
-        train_loss = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
+        train_loss, train_acc = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
         results['train_loss'].append(train_loss)
 
         # if scheduler:
         #     scheduler.step()
 
-        test_loss = test(epoch, net, args.criterion, test_loader, args, device, store_dir=store_dir)
+        test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, device, store_dir=store_dir)
         results['test_loss'].append(test_loss)
 
         if not args.debug:
