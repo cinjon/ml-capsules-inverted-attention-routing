@@ -128,8 +128,7 @@ class CapsuleFC(nn.Module):
             self.weight_init_const = np.sqrt(out_n_capsules /
                                              (self.sqrt_d * in_n_capsules))
             self.w = nn.Parameter(self.weight_init_const* \
-                                          torch.randn(in_n_capsules, self.sqrt_d, self.sqrt_d, out_n_capsules))
-
+                                  torch.randn(in_n_capsules, self.sqrt_d, self.sqrt_d, out_n_capsules))
         else:
             self.weight_init_const = np.sqrt(out_n_capsules /
                                              (in_d_capsules * in_n_capsules))
@@ -147,24 +146,39 @@ class CapsuleFC(nn.Module):
             self.out_d_capsules, self.matrix_pose, self.weight_init_const,
             self.dropout_rate)
 
+    def apply_nonlinearity(self, next_capsule_value):
+        if self.matrix_pose:
+            # 32,10,36
+            next_capsule_value = next_capsule_value.view(
+                next_capsule_value.shape[0], next_capsule_value.shape[1],
+                self.out_d_capsules)
+            return self.nonlinear_act(next_capsule_value)
+        else:
+            return self.nonlinear_act(next_capsule_value)
+
+    @staticmethod
+    def maybe_permute_input(input):
+        # 32,16,7,7,36  OR  32,10,36
+        if len(input.shape) == 5:
+            input = input.permute(0, 4, 1, 2, 3)
+            input = input.contiguous().view(input.shape[0], input.shape[1], -1)
+            input = input.permute(0, 2, 1)
+        return input
+
     def forward(self, input, num_iter, next_capsule_value=None):
         # b: batch size
         # n: num of capsules in current layer
         # a: dim of capsules in current layer
         # m: num of capsules in next layer
         # d: dim of capsules in next layer
-        if len(input.shape) == 5:
-            input = input.permute(0, 4, 1, 2, 3)
-            input = input.contiguous().view(input.shape[0], input.shape[1], -1)
-            input = input.permute(0, 2, 1)
+
+        input = self.maybe_permute_input(input)
+        w = self.w
 
         if self.matrix_pose:
-            w = self.w  # nxdm
-            # This is [16,576,64] with a sqrt_d = 8 on the first go around.
+            # 32,784,36 --> [bs, img*img, dim] --> sqrt_d = sqrt(dim)
             _input = input.view(input.shape[0], input.shape[1], self.sqrt_d,
                                 self.sqrt_d)
-        else:
-            w = self.w
 
         if next_capsule_value is None:
             query_key = torch.zeros(self.in_n_capsules,
@@ -178,7 +192,11 @@ class CapsuleFC(nn.Module):
                 next_capsule_value = torch.einsum('nm, bna, namd->bmd',
                                                   query_key, input, w)
         else:
+            # NOTE: This right here is a conflagration of the vote and and the
+            # pose of the current capsule in order to get the query_key.
+            # Is some function of the vote what we care about?
             if self.matrix_pose:
+                # 32,10,6,6
                 next_capsule_value = next_capsule_value.view(
                     next_capsule_value.shape[0], next_capsule_value.shape[1],
                     self.sqrt_d, self.sqrt_d)
@@ -189,6 +207,7 @@ class CapsuleFC(nn.Module):
                                           next_capsule_value)
             _query_key.mul_(self.scale)
             query_key = F.softmax(_query_key, dim=2)
+            # 32,784,10
             query_key = query_key / (torch.sum(query_key, dim=2, keepdim=True) +
                                      1e-10)
 
@@ -199,16 +218,12 @@ class CapsuleFC(nn.Module):
                 next_capsule_value = torch.einsum('bnm, bna, namd->bmd',
                                                   query_key, input, w)
 
+        # 32,10,6,6
         next_capsule_value = self.drop(next_capsule_value)
         if not next_capsule_value.shape[-1] == 1:
-            if self.matrix_pose:
-                # [16, 10, 8, 8] ... with a self.out_d_capsules of 8
-                next_capsule_value = next_capsule_value.view(
-                    next_capsule_value.shape[0], next_capsule_value.shape[1],
-                    self.out_d_capsules)
-                next_capsule_value = self.nonlinear_act(next_capsule_value)
-            else:
-                next_capsule_value = self.nonlinear_act(next_capsule_value)
+            next_capsule_value = self.apply_nonlinearity(next_capsule_value)
+
+        # next_capsule_value = self.apply_presence(next_capsule_value)
         return next_capsule_value
 
 
@@ -347,3 +362,103 @@ class CapsuleClassFC(CapsuleFC):
     We include this to enable logging differentiated from CapsuleFC.
     """
     _name = 'CapsuleClassFC'
+
+
+class CapsuleFCPresenceObject(CapsuleFC):
+    """Class to represent the CapsuleFC with more stuff."""
+    _name = 'CapsuleFCPresenceObject'
+
+    def __init__(self, in_n_capsules, in_d_capsules, out_n_capsules,
+                 out_d_capsules, matrix_pose, dp, object_dim):
+        super(CapsuleFCPresenceObject, self).__init__(
+            in_n_capsules, in_d_capsules, out_n_capsules, out_d_capsules,
+            matrix_pose, dp)
+
+        self.presence_mlp = nn.Linear(out_d_capsules, 1)
+        self.object_mlp = nn.Linear(out_d_capsules, object_dim)
+        self.pose_mlp = nn.Linear(out_d_capsules, out_d_capsules)
+
+    def forward(self, input, num_iter, next_capsule_value=None):
+        # b: batch size
+        # n: num of capsules in current layer
+        # a: dim of capsules in current layer
+        # m: num of capsules in next layer
+        # d: dim of capsules in next layer
+
+        input = self.maybe_permute_input(input)
+
+        # NOTE: By having presence and object be functions of input, we prevent
+        # the input from zeroing out.
+        # NOTE: I am not sure how good it is though to have presence be a
+        # function of the input and yet pose go on to factor all of the other
+        # parts out into a weighted sum. It should be that pose * presence is
+        # the same weighted sum. Yeah... ok, so we want to have it s.t.
+        # object * presence is roughyl the same across frames. We also want that
+        # object * presence * pose is indicative of the ordering.
+        # BUT I think we also want it that this is weighted by the softmax weights.
+        # ... I am not quite sure. Let's juust try this.
+
+        # 32,10,36
+        # print('shape 1: ', input.shape)
+        presence = self.presence_mlp(input)
+        # NOTE: we add noise here in order to try and spike it.
+        rand_noise = torch.FloatTensor(presence.size()).uniform_(-2, 2).to(presence.device)
+        presence += rand_noise
+        presence = F.sigmoid(presence)
+        object_ = self.object_mlp(input)
+        pose = self.pose_mlp(input)
+        # [32,10,36], [32,10,16], [32,10,1]
+        # print('SHAPES: ', pose.shape, object.shape, presence.shape)
+
+        w = self.w
+        if self.matrix_pose:
+            # 32,784,36 --> [bs, img*img, dim] --> sqrt_d = sqrt(dim)
+            _pose = pose.view(pose.shape[0], pose.shape[1], self.sqrt_d,
+                                self.sqrt_d)
+
+        if next_capsule_value is None:
+            query_key = torch.zeros(self.in_n_capsules,
+                                    self.out_n_capsules).type_as(pose)
+            query_key = F.softmax(query_key, dim=1)
+
+            if self.matrix_pose:
+                next_capsule_value = torch.einsum('nm, bnax, nxdm->bmad',
+                                                  query_key, _pose, w)
+            else:
+                next_capsule_value = torch.einsum('nm, bna, namd->bmd',
+                                                  query_key, pose, w)
+            # The query key now is [10, 10]
+        else:
+            # NOTE: This right here is a conflagration of the vote and and the
+            # pose of the current capsule in order to get the query_key.
+            # Is some function of the vote what we care about?
+            if self.matrix_pose:
+                # 32,10,6,6
+                next_capsule_value = next_capsule_value.view(
+                    next_capsule_value.shape[0], next_capsule_value.shape[1],
+                    self.sqrt_d, self.sqrt_d)
+                _query_key = torch.einsum('bnax, nxdm, bmad->bnm', _pose, w,
+                                          next_capsule_value)
+            else:
+                _query_key = torch.einsum('bna, namd, bmd->bnm', pose, w,
+                                          next_capsule_value)
+            _query_key.mul_(self.scale)
+            query_key = F.softmax(_query_key, dim=2)
+            # 32,784,10
+            query_key = query_key / (torch.sum(query_key, dim=2, keepdim=True) +
+                                     1e-10)
+
+            if self.matrix_pose:
+                next_capsule_value = torch.einsum('bnm, bnax, nxdm->bmad',
+                                                  query_key, _pose, w)
+            else:
+                next_capsule_value = torch.einsum('bnm, bna, namd->bmd',
+                                                  query_key, pose, w)
+
+        # 32,10,6,6
+        next_capsule_value = self.drop(next_capsule_value)
+        if not next_capsule_value.shape[-1] == 1:
+            next_capsule_value = self.apply_nonlinearity(next_capsule_value)
+
+        pose = next_capsule_value
+        return pose, presence, object_

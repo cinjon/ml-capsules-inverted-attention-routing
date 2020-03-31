@@ -26,6 +26,7 @@ import torchvision.transforms as transforms
 import configs
 from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
+from src import capsule_time_model
 from src.affnist import AffNist
 
 
@@ -65,6 +66,7 @@ def get_loaders(args):
                                                   batch_size=args.batch_size,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
+        affnist_test_loader = None
     elif args.dataset == 'mnist':
         train_set = torchvision.datasets.MNIST(
             args.data_root, train=True, download=True,
@@ -116,9 +118,9 @@ def get_loaders(args):
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=256, shuffle=False)
+            test_set, batch_size=192, shuffle=False)
         affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=256, shuffle=False)
+            affnist_test_set, batch_size=192, shuffle=False)
     return train_loader, test_loader, affnist_test_loader
 
 
@@ -141,8 +143,11 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion == 'xent':
+    elif criterion in ['xent', 'reorder']:
         averages['accuracy'] = Averager()
+        averages['objects_sim_loss'] = Averager()
+        averages['presence_sparsity_loss'] = Averager()
+        averages['ordering_loss'] = Averager()
 
     t = time.time()
     optimizer.zero_grad()
@@ -187,6 +192,13 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             extra_s = 'Acc: {:.5f}.'.format(
                 averages['accuracy'].item()
             )
+        elif criterion == 'reorder':
+            loss, stats = net.get_reorder_loss(images, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
             
         loss.backward()
         optimizer.step()
@@ -222,8 +234,11 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion == 'xent':
+    elif criterion in ['xent', 'reorder']:
         averages['accuracy'] = Averager()
+        averages['objects_sim_loss'] = Averager()
+        averages['presence_sparsity_loss'] = Averager()
+        averages['ordering_loss'] = Averager()
 
     t = time.time()
     with torch.no_grad():
@@ -260,14 +275,20 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     averages['pos_sim'].item(), averages['neg_sim'].item()
                 )
             elif criterion == 'xent':
-                labels = labels.to(device)
-                loss, stats = net.get_xent_loss(images, labels)
-                averages['loss'].add(loss.item())                
+                loss, stats = net.get_xent_loss(images, args)
+                averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
                 extra_s = 'Acc: {:.5f}.'.format(
                     averages['accuracy'].item()
                 )
+            elif criterion == 'reorder':
+                loss, stats = net.get_reorder_loss(images, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items()])
 
             if batch_idx % 100 == 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -316,11 +337,18 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    net = capsule_model.CapsModel(config['params'],
-                                  args.backbone,
-                                  args.dp,
-                                  args.num_routing,
-                                  sequential_routing=args.sequential_routing)
+    if args.criterion == 'reorder':
+        net = capsule_time_model.CapsTimeModel(config['params'],
+                                               args.backbone,
+                                               args.dp,
+                                               args.num_routing,
+                                               sequential_routing=args.sequential_routing)
+    else:
+        net = capsule_model.CapsModel(config['params'],
+                                      args.backbone,
+                                      args.dp,
+                                      args.num_routing,
+                                      sequential_routing=args.sequential_routing)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -368,9 +396,9 @@ def main(args):
         'total_params': total_params,
         'args': args,
         'params': config['params'],
-        'affnist_loss': [],
-        'train_loss': [],
-        'test_loss': [],
+        'affnist_acc': [],
+        'train_acc': [],
+        'test_acc': [],
     }
 
     total_epochs = args.epoch
@@ -380,24 +408,29 @@ def main(args):
         )
         store_file = os.path.join(store_dir, store_file)
 
-    # test_loss, total_negative_distance = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
     print(args.dataset)
+
+    # test_loss, test_acc = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+    # print('Before staarting Test Acc: ', test_acc)
+    # affnist_loss, affnist_acc = test(0, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
+    # print('Before starting affnist_acc: ', affnist_acc)
+
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss, train_acc = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
         print('Train Acc %.4f.' % train_acc)
-        results['train_loss'].append(train_loss)
+        results['train_acc'].append(train_acc)
 
         if scheduler:
             scheduler.step()
 
         test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
         print('Test Acc %.4f.' % test_acc)
-        results['test_loss'].append(test_loss)
+        results['test_acc'].append(test_acc)
 
-        if args.dataset == 'affnist' and test_acc >= .985 and train_acc >= .985 and epoch > 0:
+        if args.dataset == 'affnist' and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
-            results['affnist_loss'].append(affnist_loss)
+            results['affnist_acc'].append(affnist_acc)
 
         if not args.debug:
             with open(store_file, 'wb') as f:
@@ -491,6 +524,24 @@ if __name__ == '__main__':
     parser.add_argument('--schedule_gamma', type=float, default=0.1,
                         help='the default LR gamma.')
 
+    # Reordering
+    parser.add_argument('--min_width_between_frames',
+                        default=2,
+                        type=int,
+                        help='the min width between frames in the reordering.')    
+    parser.add_argument('--lambda_ordering',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the ordering loss')
+    parser.add_argument('--lambda_object_sim',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the objects being similar.')
+    parser.add_argument('--lambda_sparse_presence',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the presence L1.')
+    
     args = parser.parse_args()
     assert args.num_routing > 0
     main(args)

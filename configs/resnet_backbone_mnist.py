@@ -35,7 +35,8 @@ config = {
         "class_capsules": {
             "num_caps": 10,
             "caps_dim": 36,
-            "matrix_pose": True
+            "matrix_pose": True,
+            "object_dim": 36, # has to be the same as caps dim rn.
         },
     },
 }

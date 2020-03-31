@@ -12,7 +12,7 @@ from src import layers
 
 
 # Capsule model
-class CapsModel(nn.Module):
+class CapsTimeModel(nn.Module):
 
     def __init__(self,
                  params,
@@ -22,7 +22,7 @@ class CapsModel(nn.Module):
                  sequential_routing=True,
                  mnist_classifier_head=False,
     ):
-        super(CapsModel, self).__init__()
+        super(CapsTimeModel, self).__init__()
         #### Parameters
         self.sequential_routing = sequential_routing
 
@@ -115,25 +115,25 @@ class CapsModel(nn.Module):
                                                                                params['primary_capsules']['out_img_size']
             in_d_caps = params['primary_capsules']['caps_dim']
         self.capsule_layers.append(
-            layers.CapsuleClassFC(
+            layers.CapsuleFCPresenceObject(
                 in_n_capsules=in_n_caps,
                 in_d_capsules=in_d_caps,
                 out_n_capsules=params['class_capsules']['num_caps'],
                 out_d_capsules=params['class_capsules']['caps_dim'],
                 matrix_pose=params['class_capsules']['matrix_pose'],
-                dp=dp))
+                dp=dp,
+                object_dim=params['class_capsules']['object_dim'])
+        )
 
-        ## After Capsule
-        # fixed classifier for all class capsules
-        self.final_fc = nn.Linear(params['class_capsules']['caps_dim'], 1)
-        # different classifier for different capsules
-        #self.final_fc = nn.Parameter(torch.randn(params['class_capsules']['num_caps'], params['class_capsules']['caps_dim']))
-
+        num_concatenated_dims = 3 * params['class_capsules']['caps_dim'] * \
+            params['class_capsules']['num_caps']
+        # Either it's ordered correctly or not.
+        self.ordering_head = nn.Linear(num_concatenated_dims, 1)
         self.get_mnist_head = mnist_classifier_head
         if mnist_classifier_head:
             self.mnist_classifier_head = nn.Linear(params['class_capsules']['caps_dim'], 1)
 
-    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=True, flatten=False):
+    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False, flatten=False):
         #### Forward Pass
         ## Backbone (before capsule)
         c = self.pre_caps(x)
@@ -154,11 +154,6 @@ class CapsModel(nn.Module):
             # perform initilialization for the capsule values as single forward passing
             capsule_values, _val = [init_capsule_value], init_capsule_value
             for i in range(len(self.capsule_layers)):
-                # print('First go around %d: ' % i, _val.shape)
-                # 0 input: 32,16,9,9,36 <-- Primary Capsule Output (conv)
-                # 1 inpuut: 32,16,7,7,36 <-- Conv Capsule Output (capsule)
-                # 2 input: 32,10,36 <-- FC Capsule Output (capsule)
-                # 2 after (class capsule input): 32,10,36
                 _val = self.capsule_layers[i].forward(_val, 0)
                 # dmm:
                 # capsule 0 _val.shape: [64, 16, 6, 6, 64]
@@ -166,7 +161,7 @@ class CapsModel(nn.Module):
                 # capsule 2 _val.shape: [64, 10, 64]
                 # get the capsule value for next layer
                 capsule_values.append(_val)
-            print('\n')
+
             # second to t iterations
             # perform the routing between capsule layers
             for n in range(self.num_routing - 1):
@@ -194,28 +189,28 @@ class CapsModel(nn.Module):
                 capsule_values.append(_val)
 
         ## After Capsule
-        # dmm - capsule_values:
-        # [[64, 16, 8, 8, 64], [64, 16, 6, 6, 64], [64, 10, 64], [64, 10, 64]]
         out = capsule_values[-1]
 
+        # NOTE: This is a triple of next_capsule_value, presence, object_
+        # Pose is the next_capsule_value. So we have pose, presence, object.
+        # We then want the presence to be sparse over the capsules (dim=1), so
+        # we put an L1 penalty on it. Otherwise, it will just be 1 everywhere.
+        # We want pose * object_ * presence to be informative of the ordering.
+        # And we want pose * object_ to be relatively the same across frames.
+        # ordering.
+        pose, presence, object_ = out
+
         if return_embedding:
+            out = pose
             if flatten:
                 return out.view(out.size(0), -1)
             else:
                 return out
         elif self.get_mnist_head:
+            out = pose
             out = self.mnist_classifier_head(out).squeeze()
         else:
-            # so the last one, out, is [64, 10, 64].
-            out = self.final_fc(out)  # fixed classifier for all capsules
-            # dmm - out.shape: 64, 10, 1
-            out = out.squeeze()  # fixed classifier for all capsules
-            # dmm - out.shape: 64, 10
-
-            # They commented this out.
-            #out = torch.einsum('bnd, nd->bn', out, self.final_fc) # different classifiers for distinct capsules
-
-        return out
+            return pose, presence, object_
 
     def get_bce_loss(self, images, labels):
         images = images[:, 0, :, :, :]
@@ -311,3 +306,96 @@ class CapsModel(nn.Module):
             'neg_sim': negative_similarity
         }
         return nce, stats
+
+    def get_reorder_loss(self, images, args):
+        # images come in as [bs, num_imgs=20, ch, w, h]. we want to pick from
+        # this three frames to use as either positive or negative.
+        def _valid_sample(lst):
+            return all([
+                lst[num] < lst[num+1] - args.min_width_between_frames
+                for num in range(len(lst) - 1)
+            ])
+
+        count = 1
+        # select frames (a, b, c, d, e)
+        sample = sorted(random.sample(range(images.shape[1]), 5))
+        while not _valid_sample(sample):
+            sample = sorted(random.sample(range(images.shape[1]), 5))
+            count += 1
+        # print('How many times? ', count)
+
+        # Maybe flip the list's order.
+        if random.random() > 0.5:
+            sample = list(reversed(sample))
+
+        use_positive = random.random() > 0.5
+        if use_positive:
+            # frames (b, c, d) or (d, c, b)
+            selection = sample[1:4]
+        elif random.random() > 0.5:
+            # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
+            selection = [sample[1], sample[0], sample[3]]
+        else:
+            selection = [sample[1], sample[4], sample[3]]
+
+        images = images[:, selection]
+        images_shape = images.shape
+        batch_size, num_images = images.shape[:2]
+        labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
+
+        # Change view so that we can put everything through the model at once.
+        images = images.view(batch_size * num_images, *images.shape[2:])
+        pose, presence, object_ = self(images)
+        pose = pose.view(batch_size, num_images, *pose.shape[1:])
+        presence = presence.view(batch_size, num_images, *presence.shape[1:])
+        object_ = object_.view(batch_size, num_images, *object_.shape[1:])
+        # We now want object_presence to be equal across frames and
+        # object_pose_presence to be indicative of the ordering.
+        # The objects_ right now are Concatenate the objects so that we can compare them.
+        # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
+        object_presence = object_ * presence
+        object_pose_presence = object_presence * pose
+
+        # Get that the image representations should be the same.
+        object_presence = object_presence.view(batch_size, num_images, -1)
+        # Going with cosine similarity here.
+        transposed_object_presence = object_presence.permute(0, 2, 1)
+        # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
+        rolled_object_presence = torch.cat(
+            (transposed_object_presence[:, :, -1:],
+             transposed_object_presence[:, :, :-1]),
+            dim=2
+        )
+
+        cosine_sim = F.cosine_similarity(
+            transposed_object_presence, rolled_object_presence, dim=1)
+        
+        # Get the ordering.
+        flattened = object_pose_presence.view(batch_size, -1)
+        ordering = self.ordering_head(flattened).squeeze()
+
+        loss_objects = -cosine_sim.sum(1)
+        loss_sparsity = presence.sum((1, 2))
+        loss_objects = loss_objects.mean()
+        loss_sparsity = loss_sparsity.mean()
+        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
+        predictions = torch.sigmoid(ordering) > 0.5
+        accuracy = (predictions == labels).float().mean().item()
+
+        # NOTE: we are not including loss sparsity yet. We expect that this
+        # will yield presence = 1.
+        # ... It does not. Instead it goes to zero. We really want this to
+        # spike though.
+        total_loss = sum([
+            args.lambda_ordering * loss_ordering,
+            args.lambda_object_sim * loss_objects
+        ])
+
+        stats = {
+            'accuracy': accuracy,
+            'objects_sim_loss': loss_objects.item(),
+            'presence_sparsity_loss': loss_sparsity.item(),
+            'ordering_loss': loss_ordering.item()
+        }
+        return total_loss, stats
+        

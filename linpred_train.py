@@ -78,9 +78,9 @@ def get_loaders(args):
     train_loader = torch.utils.data.DataLoader(
         train_set, batch_size=args.batch_size, shuffle=True)
     affnist_loader = torch.utils.data.DataLoader(
-        affnist_test_set, batch_size=256, shuffle=False)
+        affnist_test_set, batch_size=192, shuffle=False)
     test_loader = torch.utils.data.DataLoader(
-        test_set, batch_size=128, shuffle=True)
+        test_set, batch_size=192, shuffle=False)
     return train_loader, test_loader, affnist_loader
 
 
@@ -230,12 +230,14 @@ def main(args):
     sequential_routing = args.sequential_routing
     if args.test_only:
         # Use this for models that already trained with discrimative loss.
+        print('Building with NO mnist classifier head.')
         net = capsule_model.CapsModel(config['params'],
                                       args.backbone,
                                       args.dp,
                                       args.num_routing,
                                       sequential_routing=sequential_routing)
     elif args.dataset in ['mnist', 'affnist']:
+        print('Building with YES mnist classifier head.')
         # Use this for models that need to a linear classifier trained on top.
         net = capsule_model.CapsModel(config['params'],
                                       args.backbone,
@@ -244,7 +246,9 @@ def main(args):
                                       sequential_routing=sequential_routing,
                                       mnist_classifier_head=True)
 
-    if args.optimizer == 'adam':
+    if args.test_only:
+        optimizer = None
+    elif args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
                                lr=args.lr,
                                # weight_decay=args.weight_decay
@@ -313,11 +317,11 @@ def main(args):
 
     if args.test_only:
         test_loss, test_acc = test(0, net, args.criterion, test_loader, args, device, store_dir=store_dir)
-        print('Test Acc: ', test_acc)
+        print('Test Acc %.4f / Loss %.4f.' % (test_acc, test_loss))
         results['test_loss'].append(test_loss)
 
         affnist_test_loss, affnist_test_acc = test(0, net, args.criterion, affnist_loader, args, device, store_dir=store_dir)
-        print('Affnist Test Acc: ', affnist_test_acc)
+        print('Affnist Test Acc %.4f / Loss %.4f.' % (affnist_test_acc, affnist_test_loss))
 
         if not args.debug:
             with open(store_file, 'wb') as f:
