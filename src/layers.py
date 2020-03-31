@@ -134,7 +134,7 @@ class CapsuleFC(nn.Module):
             self.weight_init_const = np.sqrt(out_n_capsules /
                                              (in_d_capsules * in_n_capsules))
             self.w = nn.Parameter(self.weight_init_const* \
-                                          torch.randn(in_n_capsules, in_d_capsules, out_n_capsules, out_d_capsules))
+                                  torch.randn(in_n_capsules, in_d_capsules, out_n_capsules, out_d_capsules))
         self.dropout_rate = dp
         self.nonlinear_act = nn.LayerNorm(out_d_capsules)
         self.drop = nn.Dropout(self.dropout_rate)

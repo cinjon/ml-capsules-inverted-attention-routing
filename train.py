@@ -26,6 +26,7 @@ import torchvision.transforms as transforms
 import configs
 from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
+from src.affnist import AffNist
 
 
 class Averager():
@@ -50,6 +51,8 @@ def count_parameters(model):
 
 
 def get_loaders(args):
+    affnist_test_loader = None
+
     if args.dataset == 'MovingMNist':        
         train_set = MovingMNist(args.data_root, train=True, sequence=True)
         test_set = MovingMNist(args.data_root, train=False, sequence=True)
@@ -83,7 +86,40 @@ def get_loaders(args):
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=args.batch_size, shuffle=True)
-    return train_loader, test_loader
+    elif args.dataset == 'affnist':
+        train_set = torchvision.datasets.MNIST(
+            args.data_root, train=True, download=True,
+            transform=transforms.Compose([
+                transforms.Pad(12),
+                transforms.RandomCrop(40),
+                transforms.ToTensor(),
+                transforms.Normalize((0.1397,), (0.3081,))])
+        )
+        test_set = torchvision.datasets.MNIST(
+            args.data_root, train=False,
+            transform=transforms.Compose([
+                transforms.Pad(6),
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+
+        affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+        affnist_test_set = AffNist(
+            affnist_root, train=False, subset=False,
+            transform=transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=256, shuffle=False)
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=256, shuffle=False)
+    return train_loader, test_loader, affnist_test_loader
 
 
 # Training
@@ -164,7 +200,8 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             t = time.time()
             
     train_loss = averages['loss'].item()
-    return train_loss
+    train_acc = averages['accuracy'].item()
+    return train_loss, train_acc
 
 
 def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
@@ -253,9 +290,11 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
     if not store_dir:
         print('Do not have store_dir!')
     elif not args.debug:
+        print('\n***\nSaving epoch %d\n***\n' % epoch)
         torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
 
-    return test_loss
+    test_acc = averages['accuracy'].item()
+    return test_loss, test_acc
 
 
 def main(args):
@@ -274,7 +313,7 @@ def main(args):
     config = getattr(configs, args.config).config
     print(config)
 
-    train_loader, test_loader = get_loaders(args)
+    train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
     net = capsule_model.CapsModel(config['params'],
@@ -329,6 +368,7 @@ def main(args):
         'total_params': total_params,
         'args': args,
         'params': config['params'],
+        'affnist_loss': [],
         'train_loss': [],
         'test_loss': [],
     }
@@ -341,15 +381,23 @@ def main(args):
         store_file = os.path.join(store_dir, store_file)
 
     # test_loss, total_negative_distance = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+    print(args.dataset)
     for epoch in range(start_epoch, start_epoch + total_epochs):
-        train_loss = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
+        train_loss, train_acc = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
+        print('Train Acc %.4f.' % train_acc)
         results['train_loss'].append(train_loss)
 
         if scheduler:
             scheduler.step()
 
-        test_loss = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+        test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+        print('Test Acc %.4f.' % test_acc)
         results['test_loss'].append(test_loss)
+
+        if args.dataset == 'affnist' and test_acc >= .985 and train_acc >= .985 and epoch > 0:
+            print('\n***\nRunning affnist...')
+            affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
+            results['affnist_loss'].append(affnist_loss)
 
         if not args.debug:
             with open(store_file, 'wb') as f:
