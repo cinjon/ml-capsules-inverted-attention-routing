@@ -198,7 +198,8 @@ class CapsTimeModel(nn.Module):
         # We want pose * object_ * presence to be informative of the ordering.
         # And we want pose * object_ to be relatively the same across frames.
         # ordering.
-        pose, presence, object_ = out
+        # pose, presence, object_ = out
+        pose = out
 
         if return_embedding:
             out = pose
@@ -210,7 +211,8 @@ class CapsTimeModel(nn.Module):
             out = pose
             out = self.mnist_classifier_head(out).squeeze()
         else:
-            return pose, presence, object_
+            # return pose, presence, object_
+            return pose
 
     def get_bce_loss(self, images, labels):
         images = images[:, 0, :, :, :]
@@ -308,21 +310,14 @@ class CapsTimeModel(nn.Module):
         return nce, stats
 
     def get_reorder_loss(self, images, args):
-        # images come in as [bs, num_imgs=20, ch, w, h]. we want to pick from
+        # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
         # this three frames to use as either positive or negative.
-        def _valid_sample(lst):
-            return all([
-                lst[num] < lst[num+1] - args.min_width_between_frames
-                for num in range(len(lst) - 1)
-            ])
 
-        count = 1
         # select frames (a, b, c, d, e)
-        sample = sorted(random.sample(range(images.shape[1]), 5))
-        while not _valid_sample(sample):
-            sample = sorted(random.sample(range(images.shape[1]), 5))
-            count += 1
-        # print('How many times? ', count)
+        range_size = int(images.shape[1] / 5)
+
+        sample = [random.choice(range(i*range_size, (i+1)*range_size))
+                  for i in range(5)]
 
         # Maybe flip the list's order.
         if random.random() > 0.5:
@@ -345,56 +340,53 @@ class CapsTimeModel(nn.Module):
 
         # Change view so that we can put everything through the model at once.
         images = images.view(batch_size * num_images, *images.shape[2:])
-        pose, presence, object_ = self(images)
+        pose = self(images)
         pose = pose.view(batch_size, num_images, *pose.shape[1:])
-        presence = presence.view(batch_size, num_images, *presence.shape[1:])
-        object_ = object_.view(batch_size, num_images, *object_.shape[1:])
+        # presence = presence.view(batch_size, num_images, *presence.shape[1:])
+        # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
         # We now want object_presence to be equal across frames and
         # object_pose_presence to be indicative of the ordering.
         # The objects_ right now are Concatenate the objects so that we can compare them.
         # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
-        object_presence = object_ * presence
-        object_pose_presence = object_presence * pose
+        # object_presence = object_ * presence
+        # object_pose_presence = object_presence * pose
 
         # Get that the image representations should be the same.
-        object_presence = object_presence.view(batch_size, num_images, -1)
+        # object_presence = object_presence.view(batch_size, num_images, -1)
         # Going with cosine similarity here.
-        transposed_object_presence = object_presence.permute(0, 2, 1)
+        # transposed_object_presence = object_presence.permute(0, 2, 1)
         # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
-        rolled_object_presence = torch.cat(
-            (transposed_object_presence[:, :, -1:],
-             transposed_object_presence[:, :, :-1]),
-            dim=2
-        )
+        # rolled_object_presence = torch.cat(
+        #     (transposed_object_presence[:, :, -1:],
+        #      transposed_object_presence[:, :, :-1]),
+        #     dim=2
+        # )
 
-        cosine_sim = F.cosine_similarity(
-            transposed_object_presence, rolled_object_presence, dim=1)
+        # cosine_sim = F.cosine_similarity(
+        #     transposed_object_presence, rolled_object_presence, dim=1)
         
         # Get the ordering.
-        flattened = object_pose_presence.view(batch_size, -1)
+        # flattened = object_pose_presence.view(batch_size, -1)
+        flattened = pose.view(batch_size, -1)
         ordering = self.ordering_head(flattened).squeeze()
 
-        loss_objects = -cosine_sim.sum(1)
-        loss_sparsity = presence.sum((1, 2))
-        loss_objects = loss_objects.mean()
-        loss_sparsity = loss_sparsity.mean()
+        # loss_objects = -cosine_sim.sum(1)
+        # loss_sparsity = presence.sum((1, 2))
+        # loss_objects = loss_objects.mean()
+        # loss_sparsity = loss_sparsity.mean()
         loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
         predictions = torch.sigmoid(ordering) > 0.5
         accuracy = (predictions == labels).float().mean().item()
 
-        # NOTE: we are not including loss sparsity yet. We expect that this
-        # will yield presence = 1.
-        # ... It does not. Instead it goes to zero. We really want this to
-        # spike though.
         total_loss = sum([
             args.lambda_ordering * loss_ordering,
-            args.lambda_object_sim * loss_objects
+            # args.lambda_object_sim * loss_objects
         ])
 
         stats = {
             'accuracy': accuracy,
-            'objects_sim_loss': loss_objects.item(),
-            'presence_sparsity_loss': loss_sparsity.item(),
+            # 'objects_sim_loss': loss_objects.item(),
+            # 'presence_sparsity_loss': loss_sparsity.item(),
             'ordering_loss': loss_ordering.item()
         }
         return total_loss, stats

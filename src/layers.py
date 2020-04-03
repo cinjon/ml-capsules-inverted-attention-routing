@@ -179,7 +179,6 @@ class CapsuleFC(nn.Module):
             # 32,784,36 --> [bs, img*img, dim] --> sqrt_d = sqrt(dim)
             _input = input.view(input.shape[0], input.shape[1], self.sqrt_d,
                                 self.sqrt_d)
-
         if next_capsule_value is None:
             query_key = torch.zeros(self.in_n_capsules,
                                     self.out_n_capsules).type_as(input)
@@ -400,15 +399,17 @@ class CapsuleFCPresenceObject(CapsuleFC):
 
         # 32,10,36
         # print('shape 1: ', input.shape)
-        presence = self.presence_mlp(input)
+        # presence = self.presence_mlp(input)
         # NOTE: we add noise here in order to try and spike it.
-        rand_noise = torch.FloatTensor(presence.size()).uniform_(-2, 2).to(presence.device)
-        presence += rand_noise
-        presence = F.sigmoid(presence)
-        object_ = self.object_mlp(input)
-        pose = self.pose_mlp(input)
+        # rand_noise = torch.FloatTensor(presence.size()).uniform_(-2, 2).to(presence.device)
+        # presence += rand_noise
+        # presence = F.sigmoid(presence)
+        # object_ = self.object_mlp(input)
+        # pose = self.pose_mlp(input)
         # [32,10,36], [32,10,16], [32,10,1]
         # print('SHAPES: ', pose.shape, object.shape, presence.shape)
+
+        pose = input
 
         w = self.w
         if self.matrix_pose:
@@ -461,4 +462,5 @@ class CapsuleFCPresenceObject(CapsuleFC):
             next_capsule_value = self.apply_nonlinearity(next_capsule_value)
 
         pose = next_capsule_value
-        return pose, presence, object_
+        return pose
+        # return pose, presence, object_

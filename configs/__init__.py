@@ -9,3 +9,4 @@ from . import resnet_backbone_movingmnist
 from . import resnet_backbone_movingmnist2
 from . import resnet_backbone_mnist
 from . import resnet_backbone_affnist
+from . import resnet_backbone_gymnastics

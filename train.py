@@ -28,6 +28,8 @@ from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
+from src.gymnastics import Gymnastics
+import video_transforms
 
 
 class Averager():
@@ -45,17 +47,18 @@ class Averager():
 
 
 def count_parameters(model):
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(name, param.numel())
+    # for name, param in model.named_parameters():
+    #     if param.requires_grad:
+    #         print(name, param.numel())
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def get_loaders(args):
     affnist_test_loader = None
 
-    if args.dataset == 'MovingMNist':        
-        train_set = MovingMNist(args.data_root, train=True, sequence=True)
+    if args.dataset == 'MovingMNist':
+        # NOTE: we are doing all single label here.
+        train_set = MovingMNist(args.data_root, train=True, sequence=True, chance_single_label=1.)
         test_set = MovingMNist(args.data_root, train=False, sequence=True)
         
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
@@ -121,13 +124,52 @@ def get_loaders(args):
             test_set, batch_size=192, shuffle=False)
         affnist_test_loader = torch.utils.data.DataLoader(
             affnist_test_set, batch_size=192, shuffle=False)
+    elif args.dataset == 'gymnastics':
+        resize = args.resize
+        transforms_augment_video = transforms.Compose([
+            video_transforms.ToTensorVideo(),
+            video_transforms.ResizeVideo((resize, resize), interpolation='nearest'),
+            # video_transforms.RandomResizedCropVideo(224),
+            # video_transforms.RandomHorizontalFlipVideo(),
+            video_transforms.NormalizeVideo(mean=[0.485, 0.456, 0.406],
+                                            std=[0.229, 0.224, 0.225]),
+        ])
+        transforms_regular_video = transforms.Compose([
+            video_transforms.ToTensorVideo(),
+            # video_transforms.ResizeVideo((256, 256), interpolation='nearest'),
+            # video_transforms.CenterCropVideo(224),
+            video_transforms.ResizeVideo((resize, resize), interpolation='nearest'),
+            # video_transforms.NormalizeVideo(mean=[0.485, 0.456, 0.406],
+            #                                 std=[0.229, 0.224, 0.225]),
+        ])
+
+        train_set = Gymnastics(
+            transforms=transforms_regular_video, train=True,
+            skip_videoframes=args.skip_videoframes,
+            num_videoframes=args.num_videoframes,
+            dist_videoframes=args.dist_videoframes,
+            fps=args.fps, video_directory=args.gymnastics_video_directory,
+            count_videos=args.count_videos, count_clips=args.count_clips
+        )
+        test_set = Gymnastics(
+            transforms=transforms_regular_video, train=True,
+            skip_videoframes=args.skip_videoframes,
+            num_videoframes=args.num_videoframes,
+            dist_videoframes=args.dist_videoframes,
+            fps=args.fps, video_directory=args.gymnastics_video_directory,
+            count_videos=args.count_videos, count_clips=args.count_clips
+        )
+        print("Batch size: ", args.batch_size)
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=False)
+
     return train_loader, test_loader, affnist_test_loader
 
 
 # Training
 def train(epoch, net, optimizer, criterion, loader, args, device):
-    print('\n***\nStarted training on epoch %d.\n***\n' % (epoch+1))
-
     net.train()
     total_positive_distance = 0.
     total_negative_distance = 0.
@@ -203,8 +245,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-
-        if batch_idx % 100 == 0:
+        if batch_idx % 10 == 0 and batch_idx > 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
             print(log_text.format(epoch+1, batch_idx, len(loader),
                                   time.time() - t, averages['loss'].item())
@@ -217,8 +258,6 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
 
 
 def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
-    print('\n***\nStarted test on epoch %d.\n***\n' % (epoch+1))
-
     net.eval()
     total_positive_distance = 0.
     total_negative_distance = 0.
@@ -363,9 +402,11 @@ def main(args):
 
     if args.use_scheduler:
         # CIFAR used milestones of [150, 250] with gamma of 0.1
+        milestones = [int(k) for k in args.schedule_milestones.split(',')]
+        gamma = args.schedule_gamma
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                         milestones=[150, 250],
-                                                         gamma=0.1)
+                                                         milestones=milestones,
+                                                         gamma=gamma)
     else:
         scheduler = None
 
@@ -423,9 +464,10 @@ def main(args):
         if scheduler:
             scheduler.step()
 
-        test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
-        print('Test Acc %.4f.' % test_acc)
-        results['test_acc'].append(test_acc)
+        if args.dataset != 'gynmastics':
+            test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+            print('Test Acc %.4f.' % test_acc)
+            results['test_acc'].append(test_acc)
 
         if args.dataset == 'affnist' and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
             print('\n***\nRunning affnist...')
@@ -525,10 +567,6 @@ if __name__ == '__main__':
                         help='the default LR gamma.')
 
     # Reordering
-    parser.add_argument('--min_width_between_frames',
-                        default=2,
-                        type=int,
-                        help='the min width between frames in the reordering.')    
     parser.add_argument('--lambda_ordering',
                         default=1.,
                         type=float,
@@ -541,7 +579,25 @@ if __name__ == '__main__':
                         default=1.,
                         type=float,
                         help='the lambda on the presence L1.')
-    
+
+    # VideoClip info
+    parser.add_argument('--num_videoframes', type=int, default=100)
+    parser.add_argument('--dist_videoframes', type=int, default=50, help='the frame interval between each sequence.')
+    parser.add_argument('--resize', type=int, default=128, help='to what to resize the frames of the ivdeo.')
+    parser.add_argument('--fps', type=int, default=5, help='the fps for the loaded VideoClips')
+    parser.add_argument('--count_videos', type=int, default=32, help='the number of video fiels to includuek')
+    parser.add_argument('--count_clips', type=int, default=-1, help='the number of clips to includue')
+    parser.add_argument(
+        '--skip_videoframes',
+        type=int,
+        default=5,
+        help='the number of video frames to skip in between each one. using 1 means that there is no skip.'
+    )
+    parser.add_argument('--gymnastics_video_directory',
+                        default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/feb102020',
+                        type=str,
+                        help='video directory of gymnastics files.')
+
     args = parser.parse_args()
     assert args.num_routing > 0
     main(args)
