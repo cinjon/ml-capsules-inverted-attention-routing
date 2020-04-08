@@ -24,11 +24,11 @@ def f(folder_path):
         flow = np.load(path)
         u = flow[:, :, 0]
         v = flow[:, :, 1]
-        rad = np.sqrt(np.square(u) + np.square(v))
-        rad_max = np.max(rad)
-        epsilon = 1e-5
-        u = u / (rad_max + epsilon)
-        v = v / (rad_max + epsilon)
+        # rad = np.sqrt(np.square(u) + np.square(v))
+        # rad_max = np.max(rad)
+        # epsilon = 1e-5
+        # u = u / (rad_max + epsilon)
+        # v = v / (rad_max + epsilon)
 
         rad = np.sqrt(np.square(u) + np.square(v))
         magnitude_list.append(np.average(rad))
@@ -37,4 +37,4 @@ def f(folder_path):
 if __name__ == "__main__":
     p = Pool(30)
     magnitude = p.map(f, sorted(glob(os.path.join(args.root, "*/"))))
-    np.save(os.path.join(args.store_dir, "magnitude.npy"), magnitude)
+    np.save(os.path.join(args.store_dir, "new_magnitude.npy"), magnitude)
