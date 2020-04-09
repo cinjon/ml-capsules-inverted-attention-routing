@@ -309,7 +309,7 @@ class CapsTimeModel(nn.Module):
         }
         return nce, stats
 
-    def get_reorder_loss(self, images, args):
+    def get_reorder_loss(self, images, device, args):
         # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
         # this three frames to use as either positive or negative.
 
@@ -336,6 +336,7 @@ class CapsTimeModel(nn.Module):
         images = images[:, selection]
         images_shape = images.shape
         batch_size, num_images = images.shape[:2]
+        images = images.to(device)
         labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
 
         # Change view so that we can put everything through the model at once.
@@ -368,7 +369,7 @@ class CapsTimeModel(nn.Module):
         # Get the ordering.
         # flattened = object_pose_presence.view(batch_size, -1)
         flattened = pose.view(batch_size, -1)
-        ordering = self.ordering_head(flattened).squeeze()
+        ordering = self.ordering_head(flattened).squeeze(-1)
 
         # loss_objects = -cosine_sim.sum(1)
         # loss_sparsity = presence.sum((1, 2))

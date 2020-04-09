@@ -29,6 +29,7 @@ from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import Gymnastics
+from src.gymnastics.gymnastics_flow import gymnastics_flow, gymnastics_flow_collate
 import video_transforms
 
 
@@ -60,7 +61,7 @@ def get_loaders(args):
         # NOTE: we are doing all single label here.
         train_set = MovingMNist(args.data_root, train=True, sequence=True, chance_single_label=1.)
         test_set = MovingMNist(args.data_root, train=False, sequence=True)
-        
+
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -164,6 +165,44 @@ def get_loaders(args):
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=args.batch_size, shuffle=False)
+    elif args.dataset == 'gymnastics_flow':
+        resize = args.resize
+        transforms_augment_video = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((resize, resize)),
+            transforms.ToTensor(),
+            # video_transforms.NormalizeVideo(
+            # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        transforms_regular_video = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((resize, resize)),
+            transforms.ToTensor(),
+            # video_transforms.NormalizeVideo(
+            # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        gymnastics_root = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion'
+        train_set = gymnastics_flow(
+            os.path.join(gymnastics_root, 'flows'),
+            os.path.join(gymnastics_root, 'still-bad-flows.json'),
+            os.path.join(gymnastics_root, 'nan_flow_list.json'),
+            os.path.join(gymnastics_root, 'magnitude.npy'),
+            os.path.join(gymnastics_root, 'file_dict.json'),
+            range_size=5,
+            transform=transforms_regular_video)
+        test_set = gymnastics_flow(
+            os.path.join(gymnastics_root, 'flows'),
+            os.path.join(gymnastics_root, 'still-bad-flows.json'),
+            os.path.join(gymnastics_root, 'nan_flow_list.json'),
+            os.path.join(gymnastics_root, 'magnitude.npy'),
+            os.path.join(gymnastics_root, 'file_dict.json'),
+            range_size=5,
+            transform=transforms_regular_video)
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
 
     return train_loader, test_loader, affnist_test_loader
 
@@ -194,10 +233,11 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     t = time.time()
     optimizer.zero_grad()
     for batch_idx, (images, labels) in enumerate(loader):
-        images = images.to(device)
+        # images = images.to(device)
 
         if criterion == 'triplet':
             # NOTE: Zeping.
+            images = images.to(device)
             loss, stats = net.get_triplet_loss(images)
             averages['loss'].add(loss.item())
             positive_distance = stats['positive_distance']
@@ -208,6 +248,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
                 positive_distance, negative_distance
             )
         elif criterion == 'bce':
+            images = images.to(device)
             labels = labels.to(device)
             loss, stats = net.get_bce_loss(images, labels)
             averages['loss'].add(loss.item())
@@ -216,8 +257,9 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
             extra_s = 'True Pos Rate: {:.5f} ({} / {}).'.format(
                 100. * true_positive_total / num_targets_total,
                 true_positive_total, num_targets_total
-            )            
+            )
         elif criterion == 'nce':
+            images = images.to(device)
             loss, stats = net.get_nce_loss(images, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -226,6 +268,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
                 averages['pos_sim'].item(), averages['neg_sim'].item()
             )
         elif criterion == 'xent':
+            images = images.to(device)
             labels = labels.to(device)
             loss, stats = net.get_xent_loss(images, labels)
             averages['loss'].add(loss.item())
@@ -235,13 +278,13 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
                 averages['accuracy'].item()
             )
         elif criterion == 'reorder':
-            loss, stats = net.get_reorder_loss(images, args)
+            loss, stats = net.get_reorder_loss(images, device, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
-            
+
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -251,7 +294,7 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
                                   time.time() - t, averages['loss'].item())
             )
             t = time.time()
-            
+
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item()
     return train_loss, train_acc
@@ -282,10 +325,11 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
     t = time.time()
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(loader):
-            images = images.to(device)
+            # images = images.to(device)
 
             if criterion == 'triplet':
                 # NOTE: Zeping.
+                images = images.to(device)
                 loss, stats = net.get_triplet_loss(images)
                 averages['loss'].add(loss.item())
                 positive_distance = stats['positive_distance']
@@ -296,6 +340,7 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     positive_distance, negative_distance
                 )
             elif criterion == 'bce':
+                images = images.to(device)
                 labels = labels.to(device)
                 loss, stats = net.get_bce_loss(images, labels)
                 averages['loss'].add(loss.item())
@@ -304,8 +349,9 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                 extra_s = 'True Pos Rate: {:.5f} ({} / {}).'.format(
                     100. * true_positive_total / num_targets_total,
                     true_positive_total, num_targets_total
-                )            
+                )
             elif criterion == 'nce':
+                images = images.to(device)
                 loss, stats = net.get_nce_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -314,6 +360,7 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     averages['pos_sim'].item(), averages['neg_sim'].item()
                 )
             elif criterion == 'xent':
+                images = images.to(device)
                 loss, stats = net.get_xent_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -322,7 +369,7 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                     averages['accuracy'].item()
                 )
             elif criterion == 'reorder':
-                loss, stats = net.get_reorder_loss(images, args)
+                loss, stats = net.get_reorder_loss(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -360,7 +407,7 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
 def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    
+
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -583,7 +630,7 @@ if __name__ == '__main__':
     # VideoClip info
     parser.add_argument('--num_videoframes', type=int, default=100)
     parser.add_argument('--dist_videoframes', type=int, default=50, help='the frame interval between each sequence.')
-    parser.add_argument('--resize', type=int, default=128, help='to what to resize the frames of the ivdeo.')
+    parser.add_argument('--resize', type=int, default=128, help='to what to resize the frames of the video.')
     parser.add_argument('--fps', type=int, default=5, help='the fps for the loaded VideoClips')
     parser.add_argument('--count_videos', type=int, default=32, help='the number of video fiels to includuek')
     parser.add_argument('--count_clips', type=int, default=-1, help='the number of clips to includue')
