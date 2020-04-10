@@ -141,9 +141,9 @@ class gymnastics_flow(torch.utils.data.DataLoader):
         folder_path = self.folder_paths[index]
         npy_paths = self.data_dict[folder_path]
         magnitude = self.magnitude_dict[os.path.basename(folder_path[:-1])]
+        magnitude = np.nan_to_num(magnitude)
 
         # Randomly sample image sequence based on magnitude
-        
         # magnitude_window_avg = [np.average(magnitude[i-2:i+3])\
         #      for i in range(2, len(magnitude)-2)]
         # magnitude_window_avg = [0, 0] + magnitude_window_avg + [0, 0]
@@ -152,6 +152,8 @@ class gymnastics_flow(torch.utils.data.DataLoader):
             for i in range(self.range_size*2, len(magnitude)-self.range_size*2)]
         magnitude_window_avg = [0] * (self.range_size*2) + magnitude_window_avg + [0] * (self.range_size*2)
         magnitude_window_avg = magnitude_window_avg / np.sum(magnitude_window_avg)
+        if np.sum(np.isnan(magnitude_window_avg)) > 0:
+            return None, None
         random_idx = np.random.choice(len(npy_paths), p=magnitude_window_avg)
 
         # Omit sequence with close distance (SSD)
