@@ -15,6 +15,7 @@ import argparse
 import numpy as np
 from datetime import datetime
 
+from comet_ml import Experiment as CometExperiment, OfflineExperiment
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -208,8 +209,12 @@ def get_loaders(args):
 
 
 # Training
-def train(epoch, net, optimizer, criterion, loader, args, device):
+def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_exp=None):
     net.train()
+    if comet_exp:
+        with comet_exp.train():
+            comet_exp.log_current_epoch(epoch)
+
     total_positive_distance = 0.
     total_negative_distance = 0.
 
@@ -288,19 +293,31 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+
+        step += len(images)
         if batch_idx % 10 == 0 and batch_idx > 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
             print(log_text.format(epoch+1, batch_idx, len(loader),
                                   time.time() - t, averages['loss'].item())
             )
             t = time.time()
+            if comet_exp:
+                with comet_exp.train():
+                    epoch_avgs = {k: v.item() for k, v in averages.items()}
+                    comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
 
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item()
-    return train_loss, train_acc
+
+    if comet_exp:
+        with comet_exp.train():
+            epoch_avgs = {k: v.item() for k, v in averages.items()}
+            comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
+
+    return train_loss, train_acc, step
 
 
-def test(epoch, net, criterion, loader, args, best_negative_distance, device, store_dir=None):
+def test(epoch, step, net, criterion, loader, args, best_negative_distance, device, store_dir=None, comet_exp=None):
     net.eval()
     total_positive_distance = 0.
     total_negative_distance = 0.
@@ -384,6 +401,10 @@ def test(epoch, net, criterion, loader, args, best_negative_distance, device, st
                 t = time.time()
 
         test_loss = averages['loss'].item()
+        if comet_exp:
+            with comet_exp.test():
+                epoch_avgs = {k: v.item() for k, v in averages.items()}
+                comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
 
     # Save checkpoint.
     state = {
@@ -498,21 +519,34 @@ def main(args):
 
     print(args.dataset)
 
+    if args.use_comet:
+        comet_exp = CometExperiment(api_key="hIXq6lDzWzz24zgKv7RYz6blo",
+                                    project_name="capsules",
+                                    workspace="cinjon",
+                                    auto_metric_logging=True,
+                                    auto_output_logging=None,
+                                    auto_param_logging=False)
+        comet_exp.log_parameters(vars(args))
+    else:
+        comet_exp = None
+
+
     # test_loss, test_acc = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
     # print('Before staarting Test Acc: ', test_acc)
     # affnist_loss, affnist_acc = test(0, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
     # print('Before starting affnist_acc: ', affnist_acc)
 
+    step = 0
     for epoch in range(start_epoch, start_epoch + total_epochs):
-        train_loss, train_acc = train(epoch, net, optimizer, args.criterion, train_loader, args, device)
+        train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
         print('Train Acc %.4f.' % train_acc)
         results['train_acc'].append(train_acc)
 
         if scheduler:
             scheduler.step()
 
-        if args.dataset != 'gynmastics':
-            test_loss, test_acc = test(epoch, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
+        if args.dataset != 'gymnastics':
+            test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir, comet_exp=comet_exp)
             print('Test Acc %.4f.' % test_acc)
             results['test_acc'].append(test_acc)
 
@@ -520,6 +554,9 @@ def main(args):
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
+
+        if comet_exp:
+            comet_exp.log_epoch_end(epoch)
 
         if not args.debug:
             with open(store_file, 'wb') as f:
@@ -536,6 +573,9 @@ if __name__ == '__main__':
                         default='',
                         type=str,
                         help='dir where we resume from checkpoint')
+    parser.add_argument('--no_use_comet',
+                        action='store_true',
+                        help='use comet or not')
     parser.add_argument('--num_routing',
                         default=1,
                         type=int,
@@ -646,5 +686,6 @@ if __name__ == '__main__':
                         help='video directory of gymnastics files.')
 
     args = parser.parse_args()
+    args.use_comet = not args.no_use_comet
     assert args.num_routing > 0
     main(args)
