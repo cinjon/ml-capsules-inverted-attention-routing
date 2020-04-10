@@ -538,6 +538,7 @@ def main(args):
 
     step = 0
     for epoch in range(start_epoch, start_epoch + total_epochs):
+        print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
         print('Train Acc %.4f.' % train_acc)
         results['train_acc'].append(train_acc)
