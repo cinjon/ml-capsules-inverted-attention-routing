@@ -30,7 +30,7 @@ from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import Gymnastics
-from src.gymnastics.gymnastics_flow import gymnastics_flow, gymnastics_flow_collate
+from src.gymnastics.gymnastics_flow import gymnastics_flow, gymnastics_flow_collate, gymnastics_flow_experiment
 import video_transforms
 
 
@@ -200,6 +200,39 @@ def get_loaders(args):
             os.path.join(gymnastics_root, 'file_dict.json'),
             range_size=5,
             transform=transforms_regular_video)
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
+
+    elif args.dataset == 'gymnastics_flow_experiment':
+        transform_video = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((64, 64)),
+            transforms.ToTensor(),
+            # video_transforms.NormalizeVideo(
+            #     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+
+        gymnastics_root = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion'
+        np.random.seed(args.seed)
+        train_set = gymnastics_flow_experiment(
+            os.path.join(gymnastics_root, 'flows'),
+            os.path.join(gymnastics_root, 'magnitude.npy'),
+            os.path.join(gymnastics_root, 'file_dict.json'),
+            range_size=5,
+            transform=transform_video,
+            video_num=16,
+            train=True)
+        np.random.seed(args.seed)
+        test_set = gymnastics_flow_experiment(
+            os.path.join(gymnastics_root, 'flows'),
+            os.path.join(gymnastics_root, 'magnitude.npy'),
+            os.path.join(gymnastics_root, 'file_dict.json'),
+            range_size=5,
+            transform=transform_video,
+            video_num=16,
+            train=False)
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
         test_loader = torch.utils.data.DataLoader(
@@ -687,6 +720,6 @@ if __name__ == '__main__':
                         help='video directory of gymnastics files.')
 
     args = parser.parse_args()
-    args.use_comet = not args.no_use_comet
+    args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
     main(args)

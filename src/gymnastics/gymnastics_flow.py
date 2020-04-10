@@ -2,10 +2,11 @@ import os
 import json
 import numpy as np
 from glob import glob
+import time
 
 import torch
 
-class gymnastics_flow(torch.utils.data.DataLoader):
+class gymnastics_flow(torch.utils.data.Dataset):
     def __init__(
         self,
         root,
@@ -30,7 +31,7 @@ class gymnastics_flow(torch.utils.data.DataLoader):
 
         self.get_paths()
         self.get_magnitude_dict()
-        self.make_colorwheel()
+        self.colorwheel = make_colorwheel()
 
     def get_paths(self):
         bad_flows_set = set()
@@ -68,74 +69,6 @@ class gymnastics_flow(torch.utils.data.DataLoader):
         magnitude = np.load(self.magnitude_list_path, allow_pickle=True)
         for m in magnitude:
             self.magnitude_dict[m[0]] = m[1]
-
-    def make_colorwheel(self):
-        RY = 15
-        YG = 6
-        GC = 4
-        CB = 11
-        BM = 13
-        MR = 6
-
-        ncols = RY + YG + GC + CB + BM + MR
-        self.colorwheel = np.zeros((ncols, 3))
-        col = 0
-
-        # RY
-        self.colorwheel[0:RY, 0] = 255
-        self.colorwheel[0:RY, 1] = np.floor(255*np.arange(0,RY)/RY)
-        col = col+RY
-        # YG
-        self.colorwheel[col:col+YG, 0] = 255 - np.floor(255*np.arange(0,YG)/YG)
-        self.colorwheel[col:col+YG, 1] = 255
-        col = col+YG
-        # GC
-        self.colorwheel[col:col+GC, 1] = 255
-        self.colorwheel[col:col+GC, 2] = np.floor(255*np.arange(0,GC)/GC)
-        col = col+GC
-        # CB
-        self.colorwheel[col:col+CB, 1] = 255 - np.floor(255*np.arange(CB)/CB)
-        self.colorwheel[col:col+CB, 2] = 255
-        col = col+CB
-        # BM
-        self.colorwheel[col:col+BM, 2] = 255
-        self.colorwheel[col:col+BM, 0] = np.floor(255*np.arange(0,BM)/BM)
-        col = col+BM
-        # MR
-        self.colorwheel[col:col+MR, 2] = 255 - np.floor(255*np.arange(MR)/MR)
-        self.colorwheel[col:col+MR, 0] = 255
-
-    def flow_to_img(self, flow, clip_flow=None):
-        if clip_flow is not None:
-            flow = np.clip(flow, 0, clip_flow)
-        u = flow[:, :, 0]
-        v = flow[:, :, 1]
-        rad = np.sqrt(np.square(u) + np.square(v))
-        rad_max = np.max(rad)
-        epsilon = 1e-5
-        u = u / (rad_max + epsilon)
-        v = v / (rad_max + epsilon)
-
-        flow_image = np.zeros((u.shape[0], u.shape[1], 3), np.uint8)
-        ncols = self.colorwheel.shape[0]
-        rad = np.sqrt(np.square(u) + np.square(v))
-        a = np.arctan2(-v, -u) / np.pi
-        fk = (a+1) / 2*(ncols-1)
-        k0 = np.floor(fk).astype(np.int32)
-        k1 = k0 + 1
-        k1[k1 == ncols] = 0
-        f = fk - k0
-        for i in range(self.colorwheel.shape[1]):
-            tmp = self.colorwheel[:,i]
-            col0 = tmp[k0] / 255.0
-            col1 = tmp[k1] / 255.0
-            col = (1-f)*col0 + f*col1
-            idx = (rad <= 1)
-            col[idx]  = 1 - rad[idx] * (1-col[idx])
-            col[~idx] = col[~idx] * 0.75
-            flow_image[:,:,i] = np.floor(255 * col) # col
-
-        return flow_image
 
     def __getitem__(self, index):
         folder_path = self.folder_paths[index]
@@ -190,7 +123,7 @@ class gymnastics_flow(torch.utils.data.DataLoader):
         # if np.random.rand() < 0.5:
         #     imgs = imgs[::-1]
 
-        imgs = [self.flow_to_img(flow) for flow in flows]
+        imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]
 
         if self.transform:
             imgs = torch.stack([self.transform(img) for img in imgs])
@@ -207,3 +140,156 @@ def gymnastics_flow_collate(batch):
     imgs = torch.stack([item[0] for item in batch if item[0] is not None])
     lbl = torch.stack([torch.tensor(item[1]) for item in batch if item[0] is not None])
     return [imgs, lbl]
+
+
+class gymnastics_flow_experiment(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        root,
+        magnitude_list_path,
+        file_dict_path,
+        range_size=1,
+        min_distance=0,
+        positive_ratio=0.25,
+        transform=None,
+        video_num=16,
+        train=True):
+
+        self.root = root
+        self.magnitude_list_path = magnitude_list_path
+        self.file_dict_path = file_dict_path
+        self.range_size = range_size
+        self.min_distance = min_distance
+        self.positive_ratio = positive_ratio
+        self.transform = transform
+        self.video_num = video_num
+        self.train = train
+
+        self.get_paths()
+        self.get_magnitude_dict()
+        self.colorwheel = make_colorwheel()
+
+        # Get determinstic indices
+        self.indices = []
+        for folder_path in self.folder_paths:
+            split = len(self.data_dict[folder_path]) - 5*self.range_size
+            if self.train:
+                start = 0
+                end = int(split * 4 / 5)
+            else:
+                start = int(split * 4 / 5)
+                end = len(self.data_dict[folder_path]) - 4*self.range_size
+            for i in range(start, end):
+                self.indices.append([folder_path, i])
+
+    def get_paths(self):
+        # Get npy paths
+        with open(self.file_dict_path) as f:
+            self.file_dict = json.load(f)
+        self.folder_paths = [
+            folder_path for folder_path in list(self.file_dict.keys())]
+        self.folder_paths = np.random.choice(self.folder_paths, self.video_num)
+        self.data_dict = {folder_path: self.file_dict[folder_path]\
+            for folder_path in self.folder_paths}
+
+    def get_magnitude_dict(self):
+        self.magnitude_dict = {}
+        magnitude = np.load(self.magnitude_list_path, allow_pickle=True)
+        for m in magnitude:
+            self.magnitude_dict[m[0]] = m[1]
+
+    def __getitem__(self, index):
+        folder_path, video_index = self.indices[index]
+        npy_paths = self.data_dict[folder_path]
+
+        flows = []
+        for i in range(video_index, video_index+self.range_size*5, self.range_size):
+            flows.append(np.nan_to_num(np.load(npy_paths[i])))
+
+        imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]
+
+        if self.transform:
+            imgs = torch.stack([self.transform(img) for img in imgs])
+
+        # It doesn't matter since the labels are handled in get_reorder_loss
+        lbl = 0
+
+        return imgs, lbl
+
+    def __len__(self):
+        return len(self.indices)
+
+
+########################################################################
+# Optimal Flow visualization
+########################################################################
+
+def make_colorwheel():
+    RY = 15
+    YG = 6
+    GC = 4
+    CB = 11
+    BM = 13
+    MR = 6
+
+    ncols = RY + YG + GC + CB + BM + MR
+    colorwheel = np.zeros((ncols, 3))
+    col = 0
+
+    # RY
+    colorwheel[0:RY, 0] = 255
+    colorwheel[0:RY, 1] = np.floor(255*np.arange(0,RY)/RY)
+    col = col+RY
+    # YG
+    colorwheel[col:col+YG, 0] = 255 - np.floor(255*np.arange(0,YG)/YG)
+    colorwheel[col:col+YG, 1] = 255
+    col = col+YG
+    # GC
+    colorwheel[col:col+GC, 1] = 255
+    colorwheel[col:col+GC, 2] = np.floor(255*np.arange(0,GC)/GC)
+    col = col+GC
+    # CB
+    colorwheel[col:col+CB, 1] = 255 - np.floor(255*np.arange(CB)/CB)
+    colorwheel[col:col+CB, 2] = 255
+    col = col+CB
+    # BM
+    colorwheel[col:col+BM, 2] = 255
+    colorwheel[col:col+BM, 0] = np.floor(255*np.arange(0,BM)/BM)
+    col = col+BM
+    # MR
+    colorwheel[col:col+MR, 2] = 255 - np.floor(255*np.arange(MR)/MR)
+    colorwheel[col:col+MR, 0] = 255
+
+    return colorwheel
+
+def flow_to_img(flow, colorwheel, clip_flow=None):
+    if clip_flow is not None:
+        flow = np.clip(flow, 0, clip_flow)
+    u = flow[:, :, 0]
+    v = flow[:, :, 1]
+    rad = np.sqrt(np.square(u) + np.square(v))
+    rad_max = np.max(rad)
+    epsilon = 1e-5
+    u = u / (rad_max + epsilon)
+    v = v / (rad_max + epsilon)
+
+    flow_image = np.zeros((u.shape[0], u.shape[1], 3), np.uint8)
+    ncols = colorwheel.shape[0]
+    rad = np.sqrt(np.square(u) + np.square(v))
+    a = np.arctan2(-v, -u) / np.pi
+    fk = (a+1) / 2*(ncols-1)
+    k0 = np.floor(fk).astype(np.int32)
+    k1 = k0 + 1
+    k1[k1 == ncols] = 0
+    f = fk - k0
+    for i in range(colorwheel.shape[1]):
+        tmp = colorwheel[:,i]
+        col0 = tmp[k0] / 255.0
+        col1 = tmp[k1] / 255.0
+        col = (1-f)*col0 + f*col1
+        idx = (rad <= 1)
+        col[idx]  = 1 - rad[idx] * (1-col[idx])
+        col[~idx] = col[~idx] * 0.75
+        flow_image[:,:,i] = np.floor(255 * col) # col
+
+    return flow_image
