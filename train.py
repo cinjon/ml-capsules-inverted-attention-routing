@@ -1,7 +1,7 @@
 """
 
 Sample Command:
-python moving_mnist_sequence_train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
+python train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
 --debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
 --config resnet_backbone_movingmnist2
 """
