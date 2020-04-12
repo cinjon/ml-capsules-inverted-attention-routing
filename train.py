@@ -4,6 +4,14 @@ Sample Command:
 python train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
 --debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
 --config resnet_backbone_movingmnist2
+
+Using rgb frames with 5 videoframes, skipping 12, so spans 48 frames (~2s).
+The dist_videoframes = -35 means we will then slide a window over 13 frames (~.5s).
+python train.py --results_dir /misc/kcgscratch1/ChoGroup/resnick/vidcaps/results \
+  --dataset gymnasticsRgbFrame --batch_size 8  --num_videoframes 5 \
+  --skip_videoframes 12 --dist_videoframes -35  --resize 128  --num_workers 4 \
+  --gymnastics_video_directory /misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/frames \
+  --video_names 2628 --criterion reorder
 """
 
 import os
@@ -30,7 +38,8 @@ from src.moving_mnist.moving_mnist import MovingMNist
 from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
-from src.gymnastics import Gymnastics
+from src.gymnastics import GymnasticsVideo
+from src.gymnastics import GymnasticsRgbFrame
 from src.gymnastics.gymnastics_flow import gymnastics_flow, gymnastics_flow_collate, gymnastics_flow_experiment
 import video_transforms
 
@@ -146,7 +155,7 @@ def get_loaders(args):
             #                                 std=[0.229, 0.224, 0.225]),
         ])
 
-        train_set = Gymnastics(
+        train_set = GymnasticsVideo(
             transforms=transforms_regular_video, train=True,
             skip_videoframes=args.skip_videoframes,
             num_videoframes=args.num_videoframes,
@@ -154,7 +163,7 @@ def get_loaders(args):
             fps=args.fps, video_directory=args.gymnastics_video_directory,
             count_videos=args.count_videos, count_clips=args.count_clips
         )
-        test_set = Gymnastics(
+        test_set = GymnasticsVideo(
             transforms=transforms_regular_video, train=True,
             skip_videoframes=args.skip_videoframes,
             num_videoframes=args.num_videoframes,
@@ -167,6 +176,42 @@ def get_loaders(args):
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=args.batch_size, shuffle=False)
+    elif args.dataset == 'gymnasticsRgbFrame':
+        resize = args.resize
+        transforms_augment = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((resize, resize)),
+            transforms.ToTensor(),
+        ])
+        transforms_regular = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((resize, resize)),
+            transforms.ToTensor(),
+        ])
+        train_set = GymnasticsRgbFrame(
+            transforms=transforms_augment,
+            train=True,
+            skip_videoframes=args.skip_videoframes,
+            num_videoframes=args.num_videoframes,
+            dist_videoframes=args.dist_videoframes,
+            video_directory=args.gymnastics_video_directory,
+            video_names=args.video_names.split(',')
+        )
+        test_set = GymnasticsRgbFrame(
+            transforms=transforms_regular,
+            train=False,
+            skip_videoframes=args.skip_videoframes,
+            num_videoframes=args.num_videoframes,
+            dist_videoframes=args.dist_videoframes,
+            video_directory=args.gymnastics_video_directory,
+            video_names=args.video_names.split(',')
+        )
+        train_loader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set, batch_size=args.batch_size, shuffle=False)
+        print("Batch size: ", args.batch_size, ' Loader size: ',
+              len(train_loader), len(test_loader))
     elif args.dataset == 'gymnastics_flow':
         resize = args.resize
         transforms_augment_video = transforms.Compose([
@@ -205,7 +250,6 @@ def get_loaders(args):
             train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
-
     elif args.dataset == 'gymnastics_flow_experiment':
         transform_video = transforms.Compose([
             transforms.ToPILImage(),
@@ -317,7 +361,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages['accuracy'].item()
             )
         elif criterion == 'reorder':
-            loss, stats = net.get_reorder_loss(images, device, args)
+            loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -343,6 +387,14 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item()
 
+    for key, value in stats.items():
+        averages[key].add(value)
+    extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                         for k, v in averages.items()])
+    log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+    print(log_text.format(epoch+1, batch_idx, len(loader),
+                          time.time() - t, averages['loss'].item()))
+    t = time.time()
     if comet_exp:
         with comet_exp.train():
             epoch_avgs = {k: v.item() for k, v in averages.items()}
@@ -420,40 +472,35 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     averages['accuracy'].item()
                 )
             elif criterion == 'reorder':
-                loss, stats = net.get_reorder_loss(images, device, args)
+                loss, stats = net.get_reorder_loss(images, device, args,
+                                                   labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
 
-            if batch_idx % 100 == 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
                 print(log_text.format(epoch + 1, batch_idx, len(loader),
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
 
+        for key, value in stats.items():
+            averages[key].add(value)
+        extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                             for k, v in averages.items()])
+        log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+        print(log_text.format(epoch + 1, batch_idx, len(loader),
+                              time.time() - t, averages['loss'].item())
+        )
+
         test_loss = averages['loss'].item()
         if comet_exp:
             with comet_exp.test():
                 epoch_avgs = {k: v.item() for k, v in averages.items()}
                 comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
-
-    # Save checkpoint.
-    state = {
-        'net': net.state_dict(),
-        'total_positive_distance': total_positive_distance,
-        'total_negative_distance': total_negative_distance,
-        'epoch': epoch,
-        'loss': test_loss
-    }
-
-    if not store_dir:
-        print('Do not have store_dir!')
-    elif not args.debug:
-        print('\n***\nSaving epoch %d\n***\n' % epoch)
-        torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
 
     test_acc = averages['accuracy'].item()
     return test_loss, test_acc
@@ -574,6 +621,8 @@ def main(args):
     # print('Before starting affnist_acc: ', affnist_acc)
 
     step = 0
+    last_test_loss = 1e8
+    last_saved_epoch = 0
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
@@ -588,6 +637,19 @@ def main(args):
             print('Test Acc %.4f.' % test_acc)
             results['test_acc'].append(test_acc)
 
+            if not args.debug and epoch >= last_saved_epoch + 5 and \
+               last_test_loss > test_loss:
+                state = {
+                    'net': net.state_dict(),
+                    'epoch': epoch,
+                    'step': step,
+                    'loss': test_loss
+                }
+                print('\n***\nSaving epoch %d\n***\n' % epoch)
+                torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
+                last_test_loss = test_loss
+                last_saved_epoch = epoch
+
         if args.dataset == 'affnist' and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
@@ -599,6 +661,7 @@ def main(args):
         if not args.debug:
             with open(store_file, 'wb') as f:
                 pickle.dump(results, f)
+
 
 
 if __name__ == '__main__':
@@ -621,7 +684,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset',
                         default='MovingMNist',
                         type=str,
-                        help='dataset. so far only MovingMNist.')
+                        help='dataset: MovingMNist and a host of gymnastics ones.')
     parser.add_argument('--backbone',
                         default='resnet',
                         type=str,
@@ -718,6 +781,10 @@ if __name__ == '__main__':
         default=5,
         help='the number of video frames to skip in between each one. using 1 means that there is no skip.'
     )
+    parser.add_argument('--video_names',
+                        default='2628',
+                        type=str,
+                        help='a comma separated list of videos to use for gymnastics. e.g. 1795,1016')
     parser.add_argument('--gymnastics_video_directory',
                         default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/feb102020',
                         type=str,

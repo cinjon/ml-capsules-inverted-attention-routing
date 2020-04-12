@@ -2,8 +2,11 @@
 # For licensing see accompanying LICENSE file.
 # Copyright (C) 2019 Apple Inc. All Rights Reserved.
 #
+import os
 import random
 
+import numpy as np
+from PIL import Image
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -309,12 +312,22 @@ class CapsTimeModel(nn.Module):
         }
         return nce, stats
 
-    def get_reorder_loss(self, images, device, args):
+    def get_reorder_loss(self, images, device, args, labels=None):
         # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
         # this three frames to use as either positive or negative.
 
         # select frames (a, b, c, d, e)
         range_size = int(images.shape[1] / 5)
+        # if labels is not None:
+        #     path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.after.png'
+        #     for batch_num in range(len(images)):
+        #         image = images[batch_num].numpy()
+        #         label_ = labels[batch_num].numpy()
+        #         for num in range(len(image)):
+        #             arr = image[num]
+        #             arr = (255 * arr).astype(np.uint8)
+        #             img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #             img.save(path % (label_, num))
 
         sample = [random.choice(range(i*range_size, (i+1)*range_size))
                   for i in range(5)]
@@ -334,7 +347,28 @@ class CapsTimeModel(nn.Module):
             selection = [sample[1], sample[4], sample[3]]
 
         images = images[:, selection]
+
+        # if labels is not None:
+        #     path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.after%d.png'
+        #     for batch_num in range(len(images)):
+        #         image = images[batch_num].numpy()
+        #         label_ = labels[batch_num].numpy()
+        #         for num in range(len(image)):
+        #             arr = image[num]
+        #             arr = (255 * arr).astype(np.uint8)
+        #             img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #             img.save(path % (label_, num, int(use_positive)))
+
         images_shape = images.shape
+        # print('now shape: ', images_shape)
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
+        # for i in range(3):
+        #     arr = images[0][i].numpy()
+        #     arr = (255 * arr).astype(np.uint8)
+        #     print(arr.shape, arr.dtype)
+        #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #     img.save(path % (int(use_positive), i))
+
         batch_size, num_images = images.shape[:2]
         images = images.to(device)
         labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
