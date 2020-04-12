@@ -7,6 +7,7 @@ python train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
 """
 
 import os
+import getpass
 import json
 import time
 import pickle
@@ -559,6 +560,9 @@ def main(args):
                                     auto_metric_logging=True,
                                     auto_output_logging=None,
                                     auto_param_logging=False)
+        comet_params = vars(args)
+        user = 'cinjon' if getpass.getuser() == 'resnick' else 'zeping'
+        comet_params['user_name'] = user
         comet_exp.log_parameters(vars(args))
     else:
         comet_exp = None
