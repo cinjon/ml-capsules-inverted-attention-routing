@@ -35,6 +35,7 @@ import torchvision.transforms as transforms
 
 import configs
 from src.moving_mnist.moving_mnist import MovingMNist
+from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
 from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
@@ -78,10 +79,33 @@ def get_loaders(args):
                                                    shuffle=True,
                                                    num_workers=args.num_workers)
         test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                                  batch_size=args.batch_size,
+                                                  batch_size=192,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
         affnist_test_loader = None
+    elif args.dataset == 'MovingMNist2':
+        train_set = MovingMNist2(train=True, seq_len=5, image_size=64,
+                                 colored=True, tiny=False)
+        test_set = MovingMNist2(train=False, seq_len=5, image_size=64,
+                                colored=True, tiny=False)
+        train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                   batch_size=args.batch_size,
+                                                   shuffle=True,
+                                                   num_workers=args.num_workers)
+        test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                                  batch_size=192,
+                                                  shuffle=False,
+                                                  num_workers=args.num_workers)
+        affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+        affnist_test_set = AffNist(
+            affnist_root, train=False, subset=False,
+            transform=transforms.Compose([
+                transforms.Pad(12),
+                transforms.ToTensor(),
+            ])
+        )
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=192, shuffle=False)
     elif args.dataset == 'mnist':
         train_set = torchvision.datasets.MNIST(
             args.data_root, train=True, download=True,
@@ -104,18 +128,24 @@ def get_loaders(args):
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=args.batch_size, shuffle=True)
     elif args.dataset == 'affnist':
+        # NOTE: This was originally done with Pad(12) and RandomCrop(40) on
+        # MNIST train, Pad(6) on MNIST test, and regular on AffNist.
+        resize = args.resize
+        mnist_padding = int((resize - 28)/2)
+        affnist_padding = int((resize - 40)/2)
+
         train_set = torchvision.datasets.MNIST(
             args.data_root, train=True, download=True,
             transform=transforms.Compose([
-                transforms.Pad(12),
-                transforms.RandomCrop(40),
+                transforms.Pad(mnist_padding*2),
+                transforms.RandomCrop(resize),
                 transforms.ToTensor(),
                 transforms.Normalize((0.1397,), (0.3081,))])
         )
         test_set = torchvision.datasets.MNIST(
             args.data_root, train=False,
             transform=transforms.Compose([
-                transforms.Pad(6),
+                transforms.Pad(mnist_padding),
                 transforms.ToTensor(),
                 transforms.Normalize((0.1307,), (0.3081,))
             ])
@@ -125,6 +155,7 @@ def get_loaders(args):
         affnist_test_set = AffNist(
             affnist_root, train=False, subset=False,
             transform=transforms.Compose([
+                transforms.Pad(affnist_padding),
                 transforms.ToTensor(),
                 transforms.Normalize((0.1307,), (0.3081,))
             ])
@@ -134,6 +165,8 @@ def get_loaders(args):
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
             test_set, batch_size=192, shuffle=False)
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=192, shuffle=False)
         affnist_test_loader = torch.utils.data.DataLoader(
             affnist_test_set, batch_size=192, shuffle=False)
     elif args.dataset == 'gymnastics':
@@ -307,7 +340,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder']:
+    elif criterion in ['xent', 'reorder', 'reorder2']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -367,13 +400,20 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
+        elif criterion == 'reorder2':
+            loss, stats = net.get_reorder_loss2(images, device, args, labels=labels)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
 
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
         step += len(images)
-        if batch_idx % 10 == 0 and batch_idx > 0:
+        if batch_idx % 25 == 0 and batch_idx > 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
             print(log_text.format(epoch+1, batch_idx, len(loader),
                                   time.time() - t, averages['loss'].item())
@@ -419,7 +459,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder']:
+    elif criterion in ['xent', 'reorder', 'reorder2']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -428,7 +468,6 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
     t = time.time()
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(loader):
-            # images = images.to(device)
 
             if criterion == 'triplet':
                 # NOTE: Zeping.
@@ -472,8 +511,14 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     averages['accuracy'].item()
                 )
             elif criterion == 'reorder':
-                loss, stats = net.get_reorder_loss(images, device, args,
-                                                   labels=labels)
+                loss, stats = net.get_reorder_loss(images, device, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items()])
+            elif criterion == 'reorder2':
+                loss, stats = net.get_reorder_loss2(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -525,12 +570,14 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    if args.criterion == 'reorder':
+    if args.criterion in ['reorder', 'reorder2']:
+        num_frames = 3 if args.criterion == 'reorder' else 4
         net = capsule_time_model.CapsTimeModel(config['params'],
                                                args.backbone,
                                                args.dp,
                                                args.num_routing,
-                                               sequential_routing=args.sequential_routing)
+                                               sequential_routing=args.sequential_routing,
+                                               num_frames=num_frames)
     else:
         net = capsule_model.CapsModel(config['params'],
                                       args.backbone,
@@ -541,8 +588,7 @@ def main(args):
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
                                lr=args.lr,
-                               # weight_decay=args.weight_decay
-        )
+                               weight_decay=args.weight_decay)
     elif args.optimizer == 'sgd':
         optimizer = optim.SGD(net.parameters(),
                               lr=args.lr,
@@ -632,12 +678,12 @@ def main(args):
         if scheduler:
             scheduler.step()
 
-        if args.dataset != 'gymnastics':
+        if epoch % 25 == 0:
             test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir, comet_exp=comet_exp)
             print('Test Acc %.4f.' % test_acc)
             results['test_acc'].append(test_acc)
 
-            if not args.debug and epoch >= last_saved_epoch + 5 and \
+            if not args.debug and epoch >= last_saved_epoch + 10 and \
                last_test_loss > test_loss:
                 state = {
                     'net': net.state_dict(),
@@ -650,7 +696,7 @@ def main(args):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-        if args.dataset == 'affnist' and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
+        if args.dataset in ['affnist', 'MovingMNist2'] and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
@@ -682,7 +728,7 @@ if __name__ == '__main__':
                         type=int,
                         help='number of routing. Recommended: 0,1,2,3.')
     parser.add_argument('--dataset',
-                        default='MovingMNist',
+                        default='MovingMNist2',
                         type=str,
                         help='dataset: MovingMNist and a host of gymnastics ones.')
     parser.add_argument('--backbone',
@@ -717,7 +763,7 @@ if __name__ == '__main__':
                         help='learning rate. 0.1 for SGD, 1e-2 for Adam (trying)')
     parser.add_argument('--dp', default=0.0, type=float, help='dropout rate')
     parser.add_argument('--weight_decay',
-                        default=5e-4,
+                        default=0, # was 5e-4 but default off
                         type=float,
                         help='weight decay')
     parser.add_argument('--seed', default=0, type=int, help='random seed')
@@ -727,7 +773,7 @@ if __name__ == '__main__':
                         type=int,
                         help='number of batch size')
     parser.add_argument('--optimizer',
-                        default='sgd',
+                        default='adam',
                         type=str,
                         help='adam or sgd.')
     parser.add_argument('--criterion',
