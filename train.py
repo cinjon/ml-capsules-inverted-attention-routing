@@ -349,7 +349,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2']:
+    elif criterion in ['xent', 'reorder', 'reorder2', 'new_reorder']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -416,6 +416,15 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
+        elif criterion == 'new_reorder':
+            images = images.to(device)
+            labels = labels.to(device)
+            loss, stats = net.get_new_reorder_loss(images, labels, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
 
         loss.backward()
         optimizer.step()
@@ -468,7 +477,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2']:
+    elif criterion in ['xent', 'reorder', 'reorder2', 'new_reorder']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -533,6 +542,15 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
+            elif criterion == 'new_reorder':
+                images = images.to(device)
+                labels = labels.to(device)
+                loss, stats = net.get_new_reorder_loss(images, labels, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items()])
 
             if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -579,8 +597,8 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    if args.criterion in ['reorder', 'reorder2']:
-        num_frames = 3 if args.criterion == 'reorder' else 4
+    if args.criterion in ['reorder', 'reorder2', 'new_reorder']:
+        num_frames = 4 if args.criterion == 'reorder2' else 3
         net = capsule_time_model.CapsTimeModel(config['params'],
                                                args.backbone,
                                                args.dp,

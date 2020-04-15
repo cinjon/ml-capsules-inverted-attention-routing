@@ -141,7 +141,7 @@ class CapsTimeModel(nn.Module):
         #### Forward Pass
         ## Backbone (before capsule)
         c = self.pre_caps(x)
-        
+
         ## Primary Capsule Layer (a single CNN)
         u = self.pc_layer(c)
         # dmm u.shape: [64, 1024, 8, 8]
@@ -229,7 +229,7 @@ class CapsTimeModel(nn.Module):
         true_positive_count = (predicted.eq(labels) & labels.eq(1)).sum().item()
         stats = {
             'true_pos': true_positive_count,
-            'num_targets': num_targets 
+            'num_targets': num_targets
         }
         return loss, stats
 
@@ -239,7 +239,7 @@ class CapsTimeModel(nn.Module):
         predictions = torch.argmax(output, dim=1)
         accuracy = (predictions == labels).float().mean().item()
         stats = {
-            'accuracy': accuracy,            
+            'accuracy': accuracy,
         }
         return loss, stats
 
@@ -312,6 +312,37 @@ class CapsTimeModel(nn.Module):
             'neg_sim': negative_similarity
         }
         return nce, stats
+
+    def get_new_reorder_loss(self, images, labels, args):
+        images_shape = images.shape
+
+        batch_size, num_images = images.shape[:2]
+
+        # Change view so that we can put everything through the model at once.
+        images = images.view(batch_size * num_images, *images.shape[2:])
+        pose = self(images)
+        pose = pose.view(batch_size, num_images, *pose.shape[1:])
+
+        # Get the ordering.
+        flattened = pose.view(batch_size, -1)
+        ordering = self.ordering_head(flattened).squeeze(-1)
+        
+        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
+        predictions = torch.sigmoid(ordering) > 0.5
+        accuracy = (predictions == labels).float().mean().item()
+
+        total_loss = sum([
+            args.lambda_ordering * loss_ordering,
+            # args.lambda_object_sim * loss_objects
+        ])
+
+        stats = {
+            'accuracy': accuracy,
+            # 'objects_sim_loss': loss_objects.item(),
+            # 'presence_sparsity_loss': loss_sparsity.item(),
+            'ordering_loss': loss_ordering.item()
+        }
+        return total_loss, stats
 
     def get_reorder_loss(self, images, device, args, labels=None):
         # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
@@ -400,7 +431,7 @@ class CapsTimeModel(nn.Module):
 
         # cosine_sim = F.cosine_similarity(
         #     transposed_object_presence, rolled_object_presence, dim=1)
-        
+
         # Get the ordering.
         # flattened = object_pose_presence.view(batch_size, -1)
         flattened = pose.view(batch_size, -1)
@@ -521,7 +552,7 @@ class CapsTimeModel(nn.Module):
 
         # cosine_sim = F.cosine_similarity(
         #     transposed_object_presence, rolled_object_presence, dim=1)
-        
+
         # Get the ordering.
         # flattened = object_pose_presence.view(batch_size, -1)
         flattened = pose.view(batch_size, -1)
@@ -547,4 +578,3 @@ class CapsTimeModel(nn.Module):
             'ordering_loss': loss_ordering.item()
         }
         return total_loss, stats
-

@@ -140,13 +140,14 @@ def gymnastics_flow_collate(batch):
 # Note: this one is fine
 class GymnasticsFlowExperiment(torch.utils.data.Dataset):
     def __init__(self, root, file_dict_path, video_names, transform=None,
-                 train=True, range_size=5, is_flow=True):
+                 train=True, range_size=5, positive_ratio=0.5, is_flow=True):
         self.root = root
         self.file_dict_path = file_dict_path
         self.video_names = [n + '.fps25' for n in video_names.split(',')]
         self.transform = transform
         self.train = train
         self.range_size = range_size
+        self.positive_ratio = positive_ratio
         self.is_flow = is_flow
         self.colorwheel = make_colorwheel()
 
@@ -187,22 +188,35 @@ class GymnasticsFlowExperiment(torch.utils.data.Dataset):
     def __getitem__(self, index):
         video_name, video_index = self.indices[index]
         npy_names = self.file_dict[video_name]
+        npy_paths = [os.path.join(self.root, video_name, npy_names[i])\
+            for i in range(video_index, video_index+self.range_size*5, self.range_size)]
 
-        flows = []
-        for i in range(video_index, video_index+self.range_size*5, self.range_size):
-            flows.append(np.nan_to_num(np.load(
-                os.path.join(self.root, video_name, npy_names[i]))))
-
-        if self.is_flow:
-            imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]
+        # Randomly choose if positive or negative
+        # Positive sequence
+        if np.random.rand() < self.positive_ratio:
+            flows = [save_np_load(npy_paths[i]) for i in range(1, 4)]
+            lbl = 1.
+        # Negative sequence
         else:
-            imgs = flows
+            flows = [save_np_load(npy_paths[1])]
+            # Randomly select the idx-2 frame or the idx+2 frame
+            if np.random.rand() < 0.5:
+                flows.append(save_np_load(npy_paths[0]))
+            else:
+                flows.append(save_np_load(npy_paths[4]))
+            flows.append(save_np_load(npy_paths[3]))
+            lbl = 0.
+
+        # Randomly flip the order
+        if np.random.rand() < 0.5:
+            flows = flows[::-1]
+
+        # Check whether flow_img or flow
+        imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]\
+            if self.is_flow else flows
 
         if self.transform:
             imgs = torch.stack([self.transform(img) for img in imgs])
-
-        # It doesn't matter since the labels are handled in get_reorder_loss
-        lbl = 0
 
         return imgs, lbl
 
@@ -283,3 +297,7 @@ def flow_to_img(flow, colorwheel, clip_flow=None):
         flow_image[:,:,i] = np.floor(255 * col) # col
 
     return flow_image
+
+# Convert all nan to zero
+def save_np_load(path):
+    return np.nan_to_num(np.load(path))
