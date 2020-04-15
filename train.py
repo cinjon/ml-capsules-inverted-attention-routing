@@ -40,7 +40,7 @@ from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import GymnasticsVideo
 from src.gymnastics import GymnasticsRgbFrame
-from src.gymnastics.gymnastics_flow import gymnastics_flow, gymnastics_flow_collate, gymnastics_flow_experiment
+from src.gymnastics.gymnastics_flow import GymnasticsFlow, GymnasticsFlowExperiment, gymnastics_flow_collate
 import video_transforms
 
 
@@ -228,7 +228,6 @@ def get_loaders(args):
             # video_transforms.NormalizeVideo(
             # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-
         gymnastics_root = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion'
         train_set = gymnastics_flow(
             os.path.join(gymnastics_root, 'flows'),
@@ -247,41 +246,51 @@ def get_loaders(args):
             range_size=5,
             transform=transforms_regular_video)
         train_loader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
+            train_set,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=gymnastics_flow_collate)
         test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
-    elif args.dataset == 'gymnastics_flow_experiment':
+            test_set,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=gymnastics_flow_collate)
+    elif args.dataset == 'GymnasticsFlowExperiment':
         transform_video = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.Resize((64, 64)),
+            transforms.Resize((args.resize, args.resize)),
             transforms.ToTensor(),
             # video_transforms.NormalizeVideo(
             #     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-
         gymnastics_root = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion'
-        np.random.seed(args.seed)
-        train_set = gymnastics_flow_experiment(
+        # Note: there is only 2628.fps25 in flow_imgs for now
+        train_set = GymnasticsFlowExperiment(
             os.path.join(gymnastics_root, 'flows'),
-            os.path.join(gymnastics_root, 'magnitude.npy'),
             os.path.join(gymnastics_root, 'file_dict.json'),
-            range_size=5,
+            args.video_names,
             transform=transform_video,
-            video_num=16,
-            train=True)
-        np.random.seed(args.seed)
-        test_set = gymnastics_flow_experiment(
+            train=True,
+            range_size=5,
+            is_flow=False)
+        test_set = GymnasticsFlowExperiment(
             os.path.join(gymnastics_root, 'flows'),
-            os.path.join(gymnastics_root, 'magnitude.npy'),
             os.path.join(gymnastics_root, 'file_dict.json'),
-            range_size=5,
+            args.video_names,
             transform=transform_video,
-            video_num=16,
-            train=False)
+            train=False,
+            range_size=5,
+            is_flow=False)
         train_loader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
+            train_set,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=gymnastics_flow_collate)
         test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
+            test_set,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=gymnastics_flow_collate)
 
     return train_loader, test_loader, affnist_test_loader
 
@@ -733,7 +742,7 @@ if __name__ == '__main__':
     parser.add_argument('--criterion',
                         default='triplet',
                         type=str,
-                        help='triplet, nce, bce, or xent.')
+                        help='triplet, nce, bce, xent, or reorder.')
     parser.add_argument('--nce_positive_frame_num',
                         default=10,
                         type=int,

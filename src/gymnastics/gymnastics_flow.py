@@ -1,23 +1,18 @@
 import os
 import json
+import time
+import shutil
+import getpass
 import numpy as np
 from glob import glob
-import time
 
 import torch
 
-class gymnastics_flow(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        root,
-        bad_list_path,
-        nan_list_path,
-        magnitude_list_path,
-        file_dict_path,
-        range_size=1,
-        min_distance=0,
-        positive_ratio=0.25,
-        transform=None):
+# NOTE: DON'T USE REALLY OBSOLETED
+class GymnasticsFlow(torch.utils.data.Dataset):
+    def __init__(self, root, bad_list_path,nan_list_path, magnitude_list_path,
+                 file_dict_path, range_size=1, min_distance=0,
+                 positive_ratio=0.25, transform=None):
 
         self.root = root
         self.bad_list_path = bad_list_path
@@ -142,71 +137,66 @@ def gymnastics_flow_collate(batch):
     return [imgs, lbl]
 
 
-class gymnastics_flow_experiment(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        root,
-        magnitude_list_path,
-        file_dict_path,
-        range_size=1,
-        min_distance=0,
-        positive_ratio=0.25,
-        transform=None,
-        video_num=16,
-        train=True):
-
+# Note: this one is fine
+class GymnasticsFlowExperiment(torch.utils.data.Dataset):
+    def __init__(self, root, file_dict_path, video_names, transform=None,
+                 train=True, range_size=5, is_flow=True):
         self.root = root
-        self.magnitude_list_path = magnitude_list_path
         self.file_dict_path = file_dict_path
-        self.range_size = range_size
-        self.min_distance = min_distance
-        self.positive_ratio = positive_ratio
+        self.video_names = [n + '.fps25' for n in video_names.split(',')]
         self.transform = transform
-        self.video_num = video_num
         self.train = train
-
-        self.get_paths()
-        self.get_magnitude_dict()
+        self.range_size = range_size
+        self.is_flow = is_flow
         self.colorwheel = make_colorwheel()
+
+        # Copying files
+        print('Copying the files over ...', self.video_names)
+        user = getpass.getuser()
+        folder_name = 'flow' if self.is_flow else 'flow_imgs'
+        path = '/scratch/%s/gymnastics/%s' % (user, folder_name)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        for video_name in self.video_names:
+            new_path = os.path.join(path, video_name)
+            original_path = os.path.join(root, video_name)
+            if not os.path.exists(new_path):
+                shutil.copytree(original_path, new_path)
+        self.root = path
+        print('Done copying the files over.')
+
+        # Get file dict
+        with open(self.file_dict_path) as f:
+            self.file_dict = json.load(f)
+        self.file_dict = {video_name: self.file_dict[video_name]\
+            for video_name in self.video_names}
 
         # Get determinstic indices
         self.indices = []
-        for folder_path in self.folder_paths:
-            split = len(self.data_dict[folder_path]) - 5*self.range_size
+        for video_name in self.video_names:
+            split = len(self.file_dict[video_name]) - 5*self.range_size
             if self.train:
                 start = 0
                 end = int(split * 4 / 5)
             else:
                 start = int(split * 4 / 5)
-                end = len(self.data_dict[folder_path]) - 4*self.range_size
+                end = len(self.file_dict[video_name]) - 4*self.range_size
             for i in range(start, end):
-                self.indices.append([folder_path, i])
-
-    def get_paths(self):
-        # Get npy paths
-        with open(self.file_dict_path) as f:
-            self.file_dict = json.load(f)
-        self.folder_paths = [
-            folder_path for folder_path in list(self.file_dict.keys())]
-        self.folder_paths = np.random.choice(self.folder_paths, self.video_num)
-        self.data_dict = {folder_path: self.file_dict[folder_path]\
-            for folder_path in self.folder_paths}
-
-    def get_magnitude_dict(self):
-        self.magnitude_dict = {}
-        magnitude = np.load(self.magnitude_list_path, allow_pickle=True)
-        for m in magnitude:
-            self.magnitude_dict[m[0]] = m[1]
+                self.indices.append([video_name, i])
 
     def __getitem__(self, index):
-        folder_path, video_index = self.indices[index]
-        npy_paths = self.data_dict[folder_path]
+        video_name, video_index = self.indices[index]
+        npy_names = self.file_dict[video_name]
 
         flows = []
         for i in range(video_index, video_index+self.range_size*5, self.range_size):
-            flows.append(np.nan_to_num(np.load(npy_paths[i])))
+            flows.append(np.nan_to_num(np.load(
+                os.path.join(self.root, video_name, npy_names[i]))))
 
-        imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]
+        if self.is_flow:
+            imgs = [flow_to_img(flow, self.colorwheel) for flow in flows]
+        else:
+            imgs = flows
 
         if self.transform:
             imgs = torch.stack([self.transform(img) for img in imgs])
