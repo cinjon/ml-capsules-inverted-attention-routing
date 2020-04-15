@@ -57,7 +57,7 @@ class GymnasticsRgbFrame(data.Dataset):
             print('Path Exists for frame_info: ', self.saved_frame_info)
             self.frame_info = pickle.load(open(self.saved_frame_info, 'rb'))
         else:
-            print('Path does NOT exist for frame_info: ', self.saved_frame_info)            
+            print('Path does NOT exist for frame_info: ', self.saved_frame_info)
             self.frame_info = self._get_frame_info(
                 self.frame_directories, clip_length_in_frames=clip_length_in_frames,
                 frames_between_clips=frames_between_clips, skip_frames=skip_videoframes)
@@ -65,7 +65,7 @@ class GymnasticsRgbFrame(data.Dataset):
 
         self.datums = self.frame_info
         print('Size of datums: ', len(self.datums))
-                
+
     def __len__(self):
         return len(self.datums)
 
@@ -94,12 +94,12 @@ class GymnasticsRgbFrame(data.Dataset):
         frames = ['{0:.4f}.npy'.format(f / 25) for f in frames]
         frames = [os.path.join(directory, f) for f in frames]
         frames = [np.load(f) for f in frames]
-        path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.before.png'
-        for num, frame in enumerate(frames):
-            arr = frames[num]
-            arr = (255 * arr).astype(np.uint8)
-            img = Image.fromarray(np.transpose(arr, (1, 0, 2)))
-            img.save(path % (index, num))
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.before.png'
+        # for num, frame in enumerate(frames):
+        #     arr = frames[num]
+        #     arr = (255 * arr).astype(np.uint8)
+        #     img = Image.fromarray(np.transpose(arr, (1, 0, 2)))
+        #     img.save(path % (index, num))
 
         video = torch.stack([self.transforms(frame) for frame in frames])
         return video, index

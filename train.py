@@ -32,7 +32,6 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torchvision
 import torchvision.transforms as transforms
-from torchvision.models import resnet50
 
 import configs
 from src.moving_mnist.moving_mnist import MovingMNist
@@ -44,6 +43,7 @@ from src.gymnastics import GymnasticsVideo
 from src.gymnastics import GymnasticsRgbFrame
 from src.gymnastics.gymnastics_flow import GymnasticsFlow, GymnasticsFlowExperiment, gymnastics_flow_collate
 import video_transforms
+from src.resnet_reorder_model import ReorderResNet
 
 
 class Averager():
@@ -328,52 +328,6 @@ def get_loaders(args):
 
     return train_loader, test_loader, affnist_test_loader
 
-def resnet_get_new_reorder_loss(model, images, labels, args):
-    images_shape = images.shape
-
-    batch_size, num_images = images.shape[:2]
-
-    # Change view so that we can put everything through the model at once.
-    images = images.view(batch_size * num_images, *images.shape[2:])
-    pose = model.get_feature(images)
-    pose = pose.view(batch_size, num_images, *pose.shape[1:])
-
-    # Get the ordering.
-    flattened = pose.view(batch_size, -1)
-    ordering = model.get_ordering(flattened).squeeze(-1)
-
-    loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
-    predictions = torch.sigmoid(ordering) > 0.5
-    accuracy = (predictions == labels).float().mean().item()
-
-    total_loss = sum([
-        args.lambda_ordering * loss_ordering,
-        # args.lambda_object_sim * loss_objects
-    ])
-
-    stats = {
-        'accuracy': accuracy,
-        # 'objects_sim_loss': loss_objects.item(),
-        # 'presence_sparsity_loss': loss_sparsity.item(),
-        'ordering_loss': loss_ordering.item()
-    }
-    return total_loss, stats
-
-class ReorderResNet(nn.Module):
-    def __init__(self):
-        super(ReorderResNet, self).__init__()
-        self.res = nn.Sequential(*list(resnet50().children())[:-1])
-        self.predictor = nn.Linear(2048 * 3, 1)
-
-    def get_feature(self, x):
-        x = self.res(x)
-        x = x.view(-1, 2048)
-        return x
-
-    def get_ordering(self, x):
-        x = self.predictor(x)
-        return x
-
 # Training
 def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_exp=None):
     net.train()
@@ -465,10 +419,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'new_reorder':
             images = images.to(device)
             labels = labels.to(device)
-            if args.use_resnet:
-                loss, stats = resnet_get_new_reorder_loss(net, images, labels, args)
-            else:
-                loss, stats = net.get_new_reorder_loss(images, labels, args)
+            loss, stats = net.get_new_reorder_loss(images, labels, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -594,10 +545,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'new_reorder':
                 images = images.to(device)
                 labels = labels.to(device)
-                if args.use_resnet:
-                    loss, stats = resnet_get_new_reorder_loss(net, images, labels, args)
-                else:
-                    loss, stats = net.get_new_reorder_loss(images, labels, args)
+                loss, stats = net.get_new_reorder_loss(images, labels, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
