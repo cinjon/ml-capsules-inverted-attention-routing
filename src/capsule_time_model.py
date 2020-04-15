@@ -24,6 +24,7 @@ class CapsTimeModel(nn.Module):
                  num_routing,
                  sequential_routing=True,
                  mnist_classifier_head=False,
+                 num_frames=4,
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -128,7 +129,7 @@ class CapsTimeModel(nn.Module):
                 object_dim=params['class_capsules']['object_dim'])
         )
 
-        num_concatenated_dims = 3 * params['class_capsules']['caps_dim'] * \
+        num_concatenated_dims = num_frames * params['class_capsules']['caps_dim'] * \
             params['class_capsules']['num_caps']
         # Either it's ordered correctly or not.
         self.ordering_head = nn.Linear(num_concatenated_dims, 1)
@@ -140,7 +141,7 @@ class CapsTimeModel(nn.Module):
         #### Forward Pass
         ## Backbone (before capsule)
         c = self.pre_caps(x)
-
+        
         ## Primary Capsule Layer (a single CNN)
         u = self.pc_layer(c)
         # dmm u.shape: [64, 1024, 8, 8]
@@ -318,16 +319,15 @@ class CapsTimeModel(nn.Module):
 
         # select frames (a, b, c, d, e)
         range_size = int(images.shape[1] / 5)
-        # if labels is not None:
-        #     path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.after.png'
-        #     for batch_num in range(len(images)):
-        #         image = images[batch_num].numpy()
-        #         label_ = labels[batch_num].numpy()
-        #         for num in range(len(image)):
-        #             arr = image[num]
-        #             arr = (255 * arr).astype(np.uint8)
-        #             img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #             img.save(path % (label_, num))
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after.png'
+        # for batch_num in range(len(images)):
+        #     image = images[batch_num].numpy()
+        #     label_ = labels[batch_num].numpy()
+        #     for num in range(len(image)):
+        #         arr = image[num]
+        #         arr = (255 * arr).astype(np.uint8)
+        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #         img.save(path % (label_, num))
 
         sample = [random.choice(range(i*range_size, (i+1)*range_size))
                   for i in range(5)]
@@ -347,17 +347,17 @@ class CapsTimeModel(nn.Module):
             selection = [sample[1], sample[4], sample[3]]
 
         images = images[:, selection]
+        # NOTE: selection, e.g. [1,2,3], then images.shape = [bs, 3, 3, 128, 128]
 
-        # if labels is not None:
-        #     path = '/misc/kcgscratch1/ChoGroup/resnick/vid%d.frame%d.after%d.png'
-        #     for batch_num in range(len(images)):
-        #         image = images[batch_num].numpy()
-        #         label_ = labels[batch_num].numpy()
-        #         for num in range(len(image)):
-        #             arr = image[num]
-        #             arr = (255 * arr).astype(np.uint8)
-        #             img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #             img.save(path % (label_, num, int(use_positive)))
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
+        # for batch_num in range(len(images)):
+        #     image = images[batch_num].numpy()
+        #     label_ = labels[batch_num].numpy()
+        #     for num in range(len(image)):
+        #         arr = image[num]
+        #         arr = (255 * arr).astype(np.uint8)
+        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #         img.save(path % (label_, num, int(use_positive)))
 
         images_shape = images.shape
         # print('now shape: ', images_shape)
@@ -377,6 +377,7 @@ class CapsTimeModel(nn.Module):
         images = images.view(batch_size * num_images, *images.shape[2:])
         pose = self(images)
         pose = pose.view(batch_size, num_images, *pose.shape[1:])
+
         # presence = presence.view(batch_size, num_images, *presence.shape[1:])
         # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
         # We now want object_presence to be equal across frames and
@@ -425,4 +426,125 @@ class CapsTimeModel(nn.Module):
             'ordering_loss': loss_ordering.item()
         }
         return total_loss, stats
+
+    def get_reorder_loss2(self, images, device, args, labels=None):
+        """
+        Difference between this and the above is that this uses 4 frames in the
+        sequence, not 3. But also it's made much easier.
+        """
+        # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
+        # this three frames to use as either positive or negative.
+
+        # select frames (a, b, c, d, e)
+        range_size = int(images.shape[1] / 5)
+        sample = [random.choice(range(i*range_size, (i+1)*range_size))
+                  for i in range(5)]
+
+        # Maybe flip the list's order.
+        if random.random() > 0.5:
+            sample = list(reversed(sample))
+
+        use_positive = random.random() > 0.5
+        if use_positive:
+            # frames (b, c, d, e), (a, b, c, d), (e, d, c, b), or (d, c, b, a).
+            if random.random() > 0.5:
+                selection = sample[:4]
+            else:
+                selection = sample[1:]
+        else:
+            # (a, b, c, d, e)
+            # (b, c, a, d), (a, c, d, b), (b, d, e, c),
+            # (c, a, b, d), (a, d, b, c), (b, e, c, d)
+            if random.random() > .84:
+                selection = [sample[1], sample[2], sample[0], sample[3]]
+            elif random.random() > .68:
+                selection = [sample[0], sample[2], sample[3], sample[1]]
+            elif random.random() > .52:
+                selection = [sample[1], sample[3], sample[4], sample[2]]
+            elif random.random() > .36:
+                selection = [sample[2], sample[0], sample[1], sample[3]]
+            elif random.random() > .20:
+                selection = [sample[0], sample[3], sample[1], sample[2]]
+            else:
+                selection = [sample[1], sample[4], sample[2], sample[3]]
+
+        images = images[:, selection]
+
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
+        # for batch_num in range(len(images)):
+        #     image = images[batch_num].numpy()
+        #     label_ = labels[batch_num].numpy()
+        #     for num in range(len(image)):
+        #         arr = image[num]
+        #         arr = (255 * arr).astype(np.uint8)
+        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #         img.save(path % (label_, num, int(use_positive)))
+
+        images_shape = images.shape
+        # print('now shape: ', images_shape)
+        # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
+        # for i in range(3):
+        #     arr = images[0][i].numpy()
+        #     arr = (255 * arr).astype(np.uint8)
+        #     print(arr.shape, arr.dtype)
+        #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+        #     img.save(path % (int(use_positive), i))
+
+        batch_size, num_images = images.shape[:2]
+        images = images.to(device)
+        labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
+
+        # Change view so that we can put everything through the model at once.
+        images = images.view(batch_size * num_images, *images.shape[2:])
+        pose = self(images)
+        pose = pose.view(batch_size, num_images, *pose.shape[1:])
+
+        # presence = presence.view(batch_size, num_images, *presence.shape[1:])
+        # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
+        # We now want object_presence to be equal across frames and
+        # object_pose_presence to be indicative of the ordering.
+        # The objects_ right now are Concatenate the objects so that we can compare them.
+        # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
+        # object_presence = object_ * presence
+        # object_pose_presence = object_presence * pose
+
+        # Get that the image representations should be the same.
+        # object_presence = object_presence.view(batch_size, num_images, -1)
+        # Going with cosine similarity here.
+        # transposed_object_presence = object_presence.permute(0, 2, 1)
+        # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
+        # rolled_object_presence = torch.cat(
+        #     (transposed_object_presence[:, :, -1:],
+        #      transposed_object_presence[:, :, :-1]),
+        #     dim=2
+        # )
+
+        # cosine_sim = F.cosine_similarity(
+        #     transposed_object_presence, rolled_object_presence, dim=1)
         
+        # Get the ordering.
+        # flattened = object_pose_presence.view(batch_size, -1)
+        flattened = pose.view(batch_size, -1)
+        ordering = self.ordering_head(flattened).squeeze(-1)
+
+        # loss_objects = -cosine_sim.sum(1)
+        # loss_sparsity = presence.sum((1, 2))
+        # loss_objects = loss_objects.mean()
+        # loss_sparsity = loss_sparsity.mean()
+        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
+        predictions = torch.sigmoid(ordering) > 0.5
+        accuracy = (predictions == labels).float().mean().item()
+
+        total_loss = sum([
+            args.lambda_ordering * loss_ordering,
+            # args.lambda_object_sim * loss_objects
+        ])
+
+        stats = {
+            'accuracy': accuracy,
+            # 'objects_sim_loss': loss_objects.item(),
+            # 'presence_sparsity_loss': loss_sparsity.item(),
+            'ordering_loss': loss_ordering.item()
+        }
+        return total_loss, stats
+

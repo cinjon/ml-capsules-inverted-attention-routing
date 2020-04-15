@@ -166,7 +166,7 @@ class CapsModel(nn.Module):
                 # capsule 2 _val.shape: [64, 10, 64]
                 # get the capsule value for next layer
                 capsule_values.append(_val)
-            print('\n')
+
             # second to t iterations
             # perform the routing between capsule layers
             for n in range(self.num_routing - 1):
