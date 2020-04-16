@@ -3,7 +3,7 @@ config = {
         "backbone": {
             "kernel_size": 3,
             "output_dim": 128,
-            "input_dim": 3,
+            "input_dim": 3, # for mnist it's 1. for gymnastics, 3.
             "stride": 2,
             "padding": 1,
             "out_img_size": 32

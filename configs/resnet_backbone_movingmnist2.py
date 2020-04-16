@@ -3,7 +3,7 @@ config = {
         "backbone": {
             "kernel_size": 3,
             "output_dim": 128,
-            "input_dim": 1,
+            "input_dim": 3,
             "stride": 2,
             "padding": 1,
             "out_img_size": 32
