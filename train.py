@@ -229,7 +229,8 @@ def get_loaders(args):
             num_videoframes=args.num_videoframes,
             dist_videoframes=args.dist_videoframes,
             video_directory=args.gymnastics_video_directory,
-            video_names=args.video_names.split(',')
+            video_names=args.video_names.split(','),
+            is_reorder_loss='reorder' in args.criterion
         )
         test_set = GymnasticsRgbFrame(
             transforms=transforms_regular,
@@ -238,7 +239,8 @@ def get_loaders(args):
             num_videoframes=args.num_videoframes,
             dist_videoframes=args.dist_videoframes,
             video_directory=args.gymnastics_video_directory,
-            video_names=args.video_names.split(',')
+            video_names=args.video_names.split(','),
+            is_reorder_loss='reorder' in args.criterion
         )
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
@@ -349,7 +351,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2', 'new_reorder']:
+    elif criterion in ['xent', 'reorder', 'reorder2']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -403,6 +405,8 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages['accuracy'].item()
             )
         elif criterion == 'reorder':
+            images = images.to(device)
+            labels = labels.to(device)
             loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -411,15 +415,6 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                                  for k, v in averages.items()])
         elif criterion == 'reorder2':
             loss, stats = net.get_reorder_loss2(images, device, args, labels=labels)
-            averages['loss'].add(loss.item())
-            for key, value in stats.items():
-                averages[key].add(value)
-            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                 for k, v in averages.items()])
-        elif criterion == 'new_reorder':
-            images = images.to(device)
-            labels = labels.to(device)
-            loss, stats = net.get_new_reorder_loss(images, labels, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -477,7 +472,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
         averages['num_targets'] = Averager()
         true_positive_total = 0
         num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2', 'new_reorder']:
+    elif criterion in ['xent', 'reorder', 'reorder2']:
         averages['accuracy'] = Averager()
         averages['objects_sim_loss'] = Averager()
         averages['presence_sparsity_loss'] = Averager()
@@ -529,6 +524,8 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     averages['accuracy'].item()
                 )
             elif criterion == 'reorder':
+                images = images.to(device)
+                labels = labels.to(device)
                 loss, stats = net.get_reorder_loss(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -537,15 +534,6 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                                      for k, v in averages.items()])
             elif criterion == 'reorder2':
                 loss, stats = net.get_reorder_loss2(images, device, args)
-                averages['loss'].add(loss.item())
-                for key, value in stats.items():
-                    averages[key].add(value)
-                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                     for k, v in averages.items()])
-            elif criterion == 'new_reorder':
-                images = images.to(device)
-                labels = labels.to(device)
-                loss, stats = net.get_new_reorder_loss(images, labels, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -597,7 +585,7 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    if args.criterion in ['reorder', 'reorder2', 'new_reorder']:
+    if args.criterion in ['reorder', 'reorder2']:
         num_frames = 4 if args.criterion == 'reorder2' else 3
         if args.use_resnet:
             net = ReorderResNet()

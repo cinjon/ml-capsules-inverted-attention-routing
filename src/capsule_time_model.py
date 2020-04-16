@@ -313,84 +313,7 @@ class CapsTimeModel(nn.Module):
         }
         return nce, stats
 
-    def get_new_reorder_loss(self, images, labels, args):
-        images_shape = images.shape
-
-        batch_size, num_images = images.shape[:2]
-
-        # Change view so that we can put everything through the model at once.
-        images = images.view(batch_size * num_images, *images.shape[2:])
-        pose = self(images)
-        pose = pose.view(batch_size, num_images, *pose.shape[1:])
-
-        # Get the ordering.
-        flattened = pose.view(batch_size, -1)
-        ordering = self.ordering_head(flattened).squeeze(-1)
-        
-        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
-        predictions = torch.sigmoid(ordering) > 0.5
-        accuracy = (predictions == labels).float().mean().item()
-
-        total_loss = sum([
-            args.lambda_ordering * loss_ordering,
-            # args.lambda_object_sim * loss_objects
-        ])
-
-        stats = {
-            'accuracy': accuracy,
-            # 'objects_sim_loss': loss_objects.item(),
-            # 'presence_sparsity_loss': loss_sparsity.item(),
-            'ordering_loss': loss_ordering.item()
-        }
-        return total_loss, stats
-
     def get_reorder_loss(self, images, device, args, labels=None):
-        # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
-        # this three frames to use as either positive or negative.
-
-        # select frames (a, b, c, d, e)
-        range_size = int(images.shape[1] / 5)
-        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after.png'
-        # for batch_num in range(len(images)):
-        #     image = images[batch_num].numpy()
-        #     label_ = labels[batch_num].numpy()
-        #     for num in range(len(image)):
-        #         arr = image[num]
-        #         arr = (255 * arr).astype(np.uint8)
-        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #         img.save(path % (label_, num))
-
-        sample = [random.choice(range(i*range_size, (i+1)*range_size))
-                  for i in range(5)]
-
-        # Maybe flip the list's order.
-        if random.random() > 0.5:
-            sample = list(reversed(sample))
-
-        use_positive = random.random() > 0.5
-        if use_positive:
-            # frames (b, c, d) or (d, c, b)
-            selection = sample[1:4]
-        elif random.random() > 0.5:
-            # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
-            selection = [sample[1], sample[0], sample[3]]
-        else:
-            selection = [sample[1], sample[4], sample[3]]
-
-        images = images[:, selection]
-        # NOTE: selection, e.g. [1,2,3], then images.shape = [bs, 3, 3, 128, 128]
-
-        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
-        # for batch_num in range(len(images)):
-        #     image = images[batch_num].numpy()
-        #     label_ = labels[batch_num].numpy()
-        #     for num in range(len(image)):
-        #         arr = image[num]
-        #         arr = (255 * arr).astype(np.uint8)
-        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #         img.save(path % (label_, num, int(use_positive)))
-
-        images_shape = images.shape
         # print('now shape: ', images_shape)
         # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
         # for i in range(3):
@@ -401,9 +324,6 @@ class CapsTimeModel(nn.Module):
         #     img.save(path % (int(use_positive), i))
 
         batch_size, num_images = images.shape[:2]
-        images = images.to(device)
-        labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
-
         # Change view so that we can put everything through the model at once.
         images = images.view(batch_size * num_images, *images.shape[2:])
         pose = self(images)

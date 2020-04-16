@@ -1,6 +1,7 @@
 import getpass
 import os
 import pickle
+import random
 import shutil
 
 import numpy as np
@@ -14,7 +15,8 @@ class GymnasticsRgbFrame(data.Dataset):
     """The video directory below is a directory of directories of frames."""
     def __init__(self, transforms=None, train=True, skip_videoframes=5,
                  num_videoframes=100, dist_videoframes=50,
-                 video_directory=None, video_names=None):
+                 video_directory=None, video_names=None,
+                 is_reorder_loss=False):
         print('Copying the files over ...', video_names)
         user = getpass.getuser()
         path = '/scratch/%s/gymnastics/frames' % user
@@ -34,6 +36,7 @@ class GymnasticsRgbFrame(data.Dataset):
         self.skip_videoframes = skip_videoframes
         self.num_videoframes = num_videoframes
         self.dist_videoframes = dist_videoframes
+        self.is_reorder_loss = is_reorder_loss
 
         self.frame_directories = sorted([
             os.path.join(video_directory, f) for f in os.listdir(video_directory) \
@@ -101,5 +104,32 @@ class GymnasticsRgbFrame(data.Dataset):
         #     img = Image.fromarray(np.transpose(arr, (1, 0, 2)))
         #     img.save(path % (index, num))
 
-        video = torch.stack([self.transforms(frame) for frame in frames])
-        return video, index
+        if not self.is_reorder_loss:
+            video = torch.stack([self.transforms(frame) for frame in frames])
+            return video, index
+
+        range_size = int(self.num_videoframes / 5)
+        sample = [random.choice(range(i*range_size, (i+1)*range_size))
+                  for i in range(5)]
+
+        # Maybe flip the list's order.
+        if random.random() > 0.5:
+            sample = list(reversed(sample))
+
+        use_positive = random.random() > 0.5
+        if use_positive:
+            # frames (b, c, d) or (d, c, b)
+            selection = sample[1:4]
+        elif random.random() > 0.5:
+            # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
+            selection = [sample[1], sample[0], sample[3]]
+        else:
+            selection = [sample[1], sample[4], sample[3]]
+
+        images = [frames[k] for k in selection]
+        video = torch.stack([self.transforms(frame) for frame in images])
+        # NOTE: selection, e.g. [1,2,3], then images.shape = [bs, 3, 3, 128, 128]
+
+        label = float(use_positive)
+        return video, label
+
