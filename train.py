@@ -526,7 +526,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'reorder':
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.get_reorder_loss(images, device, args)
+                loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
