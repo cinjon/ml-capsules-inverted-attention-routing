@@ -585,23 +585,22 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    if args.criterion in ['reorder', 'reorder2']:
-        num_frames = 4 if args.criterion == 'reorder2' else 3
-        if args.use_resnet:
+    num_frames = 4 if args.criterion == 'reorder2' else 3
+    is_discriminating_model = False if args.criterion in ['reorder', 'reorder2'] else True
+
+    if args.use_resnet:
+        if args.criterion in ['reorder', 'reorder2']:
             net = ReorderResNet()
         else:
-            net = capsule_time_model.CapsTimeModel(config['params'],
-                                                   args.backbone,
-                                                   args.dp,
-                                                   args.num_routing,
-                                                   sequential_routing=args.sequential_routing,
-                                                   num_frames=num_frames)
+            raise
     else:
-        net = capsule_model.CapsModel(config['params'],
-                                      args.backbone,
-                                      args.dp,
-                                      args.num_routing,
-                                      sequential_routing=args.sequential_routing)
+        net = capsule_time_model.CapsTimeModel(config['params'],
+                                               args.backbone,
+                                               args.dp,
+                                               args.num_routing,
+                                               sequential_routing=args.sequential_routing,
+                                               num_frames=num_frames,
+                                               is_discrimating_model=is_discrimating_model)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),

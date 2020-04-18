@@ -25,6 +25,7 @@ class CapsTimeModel(nn.Module):
                  sequential_routing=True,
                  mnist_classifier_head=False,
                  num_frames=4,
+                 is_discriminating_model=False, # Use True if original model.
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -129,10 +130,18 @@ class CapsTimeModel(nn.Module):
                 object_dim=params['class_capsules']['object_dim'])
         )
 
-        num_concatenated_dims = num_frames * params['class_capsules']['caps_dim'] * \
-            params['class_capsules']['num_caps']
-        # Either it's ordered correctly or not.
-        self.ordering_head = nn.Linear(num_concatenated_dims, 1)
+        if is_discriminating_model:
+            ## After Capsule
+            # fixed classifier for all class capsules
+            self.final_fc = nn.Linear(params['class_capsules']['caps_dim'], 1)
+            # different classifier for different capsules
+            #self.final_fc = nn.Parameter(torch.randn(params['class_capsules']['num_caps'], params['class_capsules']['caps_dim']))
+        else:
+            num_concatenated_dims = num_frames * params['class_capsules']['caps_dim'] * \
+                params['class_capsules']['num_caps']
+            # Either it's ordered correctly or not.
+            self.ordering_head = nn.Linear(num_concatenated_dims, 1)
+
         self.get_mnist_head = mnist_classifier_head
         if mnist_classifier_head:
             self.mnist_classifier_head = nn.Linear(params['class_capsules']['caps_dim'], 1)
@@ -214,6 +223,8 @@ class CapsTimeModel(nn.Module):
         elif self.get_mnist_head:
             out = pose
             out = self.mnist_classifier_head(out).squeeze()
+        elif self.is_discriminating_model:
+            return self.final_fc(pose).squeeze()
         else:
             # return pose, presence, object_
             return pose
