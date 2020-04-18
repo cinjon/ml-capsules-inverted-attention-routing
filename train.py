@@ -373,7 +373,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         if criterion == 'triplet':
             # NOTE: Zeping.
             images = images.to(device)
-            loss, stats = net.get_triplet_loss(images)
+            loss, stats = net.module.get_triplet_loss(images)
             averages['loss'].add(loss.item())
             positive_distance = stats['positive_distance']
             negative_distance = stats['negative_distance']
@@ -385,7 +385,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'bce':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_bce_loss(images, labels)
+            loss, stats = net.module.get_bce_loss(images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
             num_targets_total += stats['num_targets']
@@ -395,7 +395,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             )
         elif criterion == 'nce':
             images = images.to(device)
-            loss, stats = net.get_nce_loss(images, args)
+            loss, stats = net.module.get_nce_loss(images, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -404,7 +404,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             )
         elif criterion == 'triangle':
             images = images.to(device)
-            loss, stats = net.get_triangle_loss(images, device, args)
+            loss, stats = net.module.get_triangle_loss(images, device, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -413,7 +413,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'xent':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_xent_loss(images, labels)
+            loss, stats = net.module.get_xent_loss(images, labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -423,14 +423,14 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'reorder':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
+            loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion == 'reorder2':
-            loss, stats = net.get_reorder_loss2(images, device, args, labels=labels)
+            loss, stats = net.module.get_reorder_loss2(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 averages[key].add(value)
@@ -506,7 +506,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             if criterion == 'triplet':
                 # NOTE: Zeping.
                 images = images.to(device)
-                loss, stats = net.get_triplet_loss(images)
+                loss, stats = net.module.get_triplet_loss(images)
                 averages['loss'].add(loss.item())
                 positive_distance = stats['positive_distance']
                 negative_distance = stats['negative_distance']
@@ -518,7 +518,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'bce':
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.get_bce_loss(images, labels)
+                loss, stats = net.module.get_bce_loss(images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
                 num_targets_total += stats['num_targets']
@@ -528,7 +528,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 )
             elif criterion == 'nce':
                 images = images.to(device)
-                loss, stats = net.get_nce_loss(images, args)
+                loss, stats = net.module.get_nce_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -537,7 +537,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 )
             elif criterion == 'triangle':
                 images = images.to(device)
-                loss, stats = net.get_triangle_loss(images, device, args)
+                loss, stats = net.module.get_triangle_loss(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -545,7 +545,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                                      for k, v in averages.items()])
             elif criterion == 'xent':
                 images = images.to(device)
-                loss, stats = net.get_xent_loss(images, args)
+                loss, stats = net.module.get_xent_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -555,14 +555,14 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'reorder':
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
+                loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
             elif criterion == 'reorder2':
-                loss, stats = net.get_reorder_loss2(images, device, args)
+                loss, stats = net.module.get_reorder_loss2(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     averages[key].add(value)
@@ -661,10 +661,7 @@ def main(args):
         os.makedirs(store_dir)
 
     net = net.to(device)
-    if device == 'cuda':
-        if args.num_gpus > 1:
-            net = torch.nn.DataParallel(net)
-        cudnn.benchmark = True
+    net = torch.nn.DataParallel(net)
 
     best_negative_distance = 0
     if args.resume_dir and not args.debug:

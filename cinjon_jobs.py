@@ -31,10 +31,10 @@ def run(find_counter=None):
         'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
         'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist'
     }
-    num_gpus = 2
+    num_gpus = 1
     time = 8
     var_arrays = {
-        'lr': [3e-4],
+        'lr': [.0003],
         'triangle_lambda': [1., 3.],
     }
     counter, _job = do_jobarray(
@@ -62,10 +62,10 @@ def run(find_counter=None):
         'gymnastics_video_directory': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/frames.feb102020',
         'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
     }
-    num_gpus = 2
+    num_gpus = 1
     time = 8
     var_arrays = {
-        'lr': [3e-4],
+        'lr': [.0003],
         'triangle_lambda': [1., 3, 10.],
     }
     counter, _job = do_jobarray(
@@ -93,10 +93,10 @@ def run(find_counter=None):
         'gymnastics_video_directory': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/frames.feb102020',
         'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
     }
-    num_gpus = 2
+    num_gpus = 1
     time = 8
     var_arrays = {
-        'lr': [3e-4],
+        'lr': [.0003],
         'triangle_lambda': [1., 3, 10.],
     }
     counter, _job = do_jobarray(

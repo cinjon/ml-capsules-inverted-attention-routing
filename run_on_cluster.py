@@ -28,7 +28,7 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
 
     keys = sorted(var_arrays.keys())
     lsts = [var_arrays[key] for key in keys]
-    for job_lst in itertools.product(lsts):
+    for job_lst in itertools.product(*lsts):
         _job = {k: v for k, v in job.items()}
         _job['counter'] = counter
         for key, value in zip(keys, job_lst):
@@ -50,6 +50,7 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
     slurmfile = os.path.join(slurm_scripts, jobname + '.slurm')
     hours = int(time)
     minutes = int((time - hours) * 60)
+    exclude = 'vine[3-14],hpc[1-9]'
     with open(slurmfile, 'w') as f:
         f.write("#!/bin/bash\n")
         f.write("#SBATCH --job-name=%s\n" % jobname)
@@ -62,14 +63,14 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
         f.write("#SBATCH --gres=gpu:%d\n" % num_gpus)
         f.write("#SBATCH --mem=%dG\n" % gb)
         f.write("#SBATCH --nodes=%d\n" % 1)
-        # f.write("#SBATCH --exclude=%s\n" % exclude)
+        f.write("#SBATCH --exclude=%s\n" % exclude)
         f.write("#SBATCH --output=%s\n" % os.path.join(
             slurm_logs, jobname + ".%A.%a.out"))
         f.write("#SBATCH --error=%s\n" % os.path.join(
             slurm_logs, jobname + ".%A.%a.err"))
         
         f.write("module purge" + "\n")
-        f.write("module load cuda-10.1\n")
+        f.write("module load cuda-10.2\n")
         f.write("module load gcc-8.1\n")
         f.write("source activate vidcaps\n")
         f.write("SRCDIR=%s\n" % code_directory)
