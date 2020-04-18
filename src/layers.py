@@ -373,9 +373,9 @@ class CapsuleFCPresenceObject(CapsuleFC):
             in_n_capsules, in_d_capsules, out_n_capsules, out_d_capsules,
             matrix_pose, dp)
 
-        self.presence_mlp = nn.Linear(out_d_capsules, 1)
-        self.object_mlp = nn.Linear(out_d_capsules, object_dim)
-        self.pose_mlp = nn.Linear(out_d_capsules, out_d_capsules)
+        # self.presence_mlp = nn.Linear(out_d_capsules, 1)
+        # self.object_mlp = nn.Linear(out_d_capsules, object_dim)
+        # self.pose_mlp = nn.Linear(out_d_capsules, out_d_capsules)
 
     def forward(self, input, num_iter, next_capsule_value=None):
         # b: batch size

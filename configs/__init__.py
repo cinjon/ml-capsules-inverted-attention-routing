@@ -7,7 +7,9 @@ from . import resnet_backbone_cifar100
 from . import resnet_backbone_diversemultimnist
 from . import resnet_backbone_movingmnist
 from . import resnet_backbone_movingmnist2
+from . import resnet_backbone_movingmnist2_2cc
 from . import resnet_backbone_mnist
 from . import resnet_backbone_affnist
 from . import resnet_backbone_gymnastics
 from . import resnet_backbone_gymnastics_small
+from . import resnet_backbone_gymnastics_1cc

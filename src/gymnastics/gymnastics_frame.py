@@ -16,7 +16,7 @@ class GymnasticsRgbFrame(data.Dataset):
     def __init__(self, transforms=None, train=True, skip_videoframes=5,
                  num_videoframes=100, dist_videoframes=50,
                  video_directory=None, video_names=None,
-                 is_reorder_loss=False):
+                 is_reorder_loss=False, is_triangle_loss=False):
         print('Copying the files over ...', video_names)
         user = getpass.getuser()
         path = '/scratch/%s/gymnastics/frames' % user
@@ -37,6 +37,8 @@ class GymnasticsRgbFrame(data.Dataset):
         self.num_videoframes = num_videoframes
         self.dist_videoframes = dist_videoframes
         self.is_reorder_loss = is_reorder_loss
+        self.is_triangle_loss = is_triangle_loss
+        self.is_normal_video = not is_reorder_loss and not is_triangle_loss
 
         self.frame_directories = sorted([
             os.path.join(video_directory, f) for f in os.listdir(video_directory) \
@@ -104,7 +106,7 @@ class GymnasticsRgbFrame(data.Dataset):
         #     img = Image.fromarray(np.transpose(arr, (1, 0, 2)))
         #     img.save(path % (index, num))
 
-        if not self.is_reorder_loss:
+        if self.is_normal_video:
             video = torch.stack([self.transforms(frame) for frame in frames])
             return video, index
 
@@ -116,15 +118,25 @@ class GymnasticsRgbFrame(data.Dataset):
         if random.random() > 0.5:
             sample = list(reversed(sample))
 
-        use_positive = random.random() > 0.5
-        if use_positive:
-            # frames (b, c, d) or (d, c, b)
-            selection = sample[1:4]
-        elif random.random() > 0.5:
-            # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
-            selection = [sample[1], sample[0], sample[3]]
+        if self.is_triangle_loss:
+            use_positive = True
+            p = random.random()
+            if p > 0.66:
+                selection = sample[:3]
+            elif p > 0.33:
+                selection = sample[1:4]
+            else:
+                selection = sample[2:]
         else:
-            selection = [sample[1], sample[4], sample[3]]
+            use_positive = random.random() > 0.5
+            if use_positive:
+                # frames (b, c, d) or (d, c, b)
+                selection = sample[1:4]
+            elif random.random() > 0.5:
+                # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
+                selection = [sample[1], sample[0], sample[3]]
+            else:
+                selection = [sample[1], sample[4], sample[3]]
 
         images = [frames[k] for k in selection]
         video = torch.stack([self.transforms(frame) for frame in images])

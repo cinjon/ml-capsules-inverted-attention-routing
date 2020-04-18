@@ -130,6 +130,7 @@ class CapsTimeModel(nn.Module):
                 object_dim=params['class_capsules']['object_dim'])
         )
 
+        self.is_discriminating_model = is_discriminating_model
         if is_discriminating_model:
             ## After Capsule
             # fixed classifier for all class capsules
@@ -509,3 +510,33 @@ class CapsTimeModel(nn.Module):
             'ordering_loss': loss_ordering.item()
         }
         return total_loss, stats
+
+    def get_triangle_loss(self, images, device, args):
+        batch_size, num_images = images.shape[:2]
+        # We compute the ssd to check the max margin between the frames on
+        # either side. This is for stats.
+        # with torch.no_grad():
+        #     ssd = (images[:, 0] - images[:, 2])**2
+        #     ssd = ssd.sum((1, 2, 3))
+        #     print('SSSD SHAPE: ', ssd.shape)
+        #     ssd = ssd.mean(0)
+        #     print('SSSD final: ', ssd)
+
+        # Change view so that we can put everything through the model at once.
+        images = images.view(batch_size * num_images, *images.shape[2:])
+        pose = self(images)
+        pose = pose.view(batch_size, num_images, *pose.shape[1:])
+
+        sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+        sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+        sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+
+        loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+        stats = {
+            'frame_12_sim': sim_12.item(),
+            'frame_23_sim': sim_23.item(),
+            'frame_13_sim': sim_13.item(),
+            'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+            # 'ssd_13': ssd.item()
+        }
+        return loss, stats
