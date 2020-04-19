@@ -50,7 +50,7 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
     slurmfile = os.path.join(slurm_scripts, jobname + '.slurm')
     hours = int(time)
     minutes = int((time - hours) * 60)
-    exclude = 'vine[3-14],hpc[1-9]'
+    exclude = 'vine[3-14],hpc[1-9],rose[1-4,7-9]'
     with open(slurmfile, 'w') as f:
         f.write("#!/bin/bash\n")
         f.write("#SBATCH --job-name=%s\n" % jobname)

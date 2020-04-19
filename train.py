@@ -656,7 +656,11 @@ def main(args):
     print('Total Params %d' % total_params)
 
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-    store_dir = os.path.join(args.results_dir, today)
+    if args.name and args.counter is not None:
+        store_dir = os.path.join(args.results_dir, args.name,
+                                 str(args.counter), today)
+    else:
+        store_dir = os.path.join(args.results_dir, today)
     if not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
@@ -703,6 +707,8 @@ def main(args):
         comet_params = vars(args)
         user = 'cinjon' if getpass.getuser() == 'resnick' else 'zeping'
         comet_params['user_name'] = user
+        if args.counter is not None and args.name is not None:
+            comet_exp.set_name('%s-%d' % (args.name, args.counter))
         comet_exp.log_parameters(vars(args))
     else:
         comet_exp = None
@@ -776,6 +782,8 @@ if __name__ == '__main__':
                         help='mode to use, either run or jobarray')
     parser.add_argument('--counter', type=int, default=None,
                         help='the counter when running with slurm')
+    parser.add_argument('--name', type=str, default=None,
+                        help='the name when running with slurm')
     parser.add_argument('--resume_dir',
                         '-r',
                         default='',

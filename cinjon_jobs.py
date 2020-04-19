@@ -39,7 +39,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -66,17 +66,15 @@ def run(find_counter=None):
     time = 8
     var_arrays = {
         'lr': [.0003],
-        'triangle_lambda': [1., 3, 10.],
+        'triangle_lambda': [1., 3.],
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
-    # NOTE: These jobs are running the triangle loss in order to get a sense of
-    # if that trains. It's working w Gymnastics but only using one capsule at
-    # the end.
+    # Here, we are doing it with 6 videonames and a smaller triangle_lambda range.
     job = {
         'name': '2020.04.18',
         'optimizer': 'adam',
@@ -97,7 +95,7 @@ def run(find_counter=None):
     time = 8
     var_arrays = {
         'lr': [.0003],
-        'triangle_lambda': [1., 3, 10.],
+        'triangle_lambda': [1.5, 2, 3],
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
@@ -105,6 +103,23 @@ def run(find_counter=None):
     if find_counter and _job:
         return counter, _job
 
+    # Here, we are shrinking the triangle lambda again and trying a bigger LR,
+    # along with a milestone schedule.
+    job.update({
+        'name': '2020.04.19',
+        'epoch': 500,
+        'schedule_milestones': '350',
+        'use_scheduler': True,
+    })
+    var_arrays = {
+        'lr': [.0003, .001],
+        'triangle_lambda': [1.1, 1.2, 1.3, 1.4],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
 
     return None, None
             
