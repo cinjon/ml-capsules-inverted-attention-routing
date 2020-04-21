@@ -531,12 +531,56 @@ class CapsTimeModel(nn.Module):
         sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
         sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
 
-        loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+        segment_13 = pose[:, 2, :] - pose[:, 0, :]
+        segment_12 = pose[:, 1, :] - pose[:, 0, :]
+        cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+
+        if args.criterion == 'triangle_margin2_angle':
+            # Here, we optimize the angle between them. We will pair it down
+            # below with the margin_loss_12 + margin_loss_23.
+            loss = -cosine_sim_13_12
+        else:
+            # Here, we optimize the triangle expression. This going to zero
+            # should surrogate optimize the angle above.
+            loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+
         stats = {
             'frame_12_sim': sim_12.item(),
             'frame_23_sim': sim_23.item(),
             'frame_13_sim': sim_13.item(),
             'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
-            # 'ssd_13': ssd.item()
+            'cosine_sim_13_12': cosine_sim_13_12.item()
         }
+
+        if args.criterion == 'triangle_cos':
+            # We want to minimize cosine similarity. Maximizing it would mean
+            # that the angle between them was theta.
+            cos_sim_13 = F.cosine_similarity(pose[:, 0, :], pose[:, 2, :]).mean()
+            stats['frame_13_cossim'] = cos_sim_13.item()
+            loss += args.triangle_cos_lambda * cos_sim_13
+        elif args.criterion == 'triangle_margin':
+            # We want to try to get the distance between pose of frames 1 and 3
+            # to be at least the margin size.
+            margin_loss = torch.norm(segment_13, dim=1)
+            margin_loss = args.margin_gamma - margin_loss
+            margin_loss = F.relu(margin_loss).sum()
+            loss += margin_loss * args.triangle_margin_lambda
+            stats['margin_loss'] = margin_loss.item()
+        elif args.criterion in ['triangle_margin2', 'triangle_margin2_angle']:
+            # Here we put the margin_loss on segmnet_12 and semgnet_23 instead.
+            segment_23 = pose[:, 2, :] - pose[:, 1, :]
+            margin_loss_23 = torch.norm(segment_23, dim=1)
+            margin_loss_23 = args.margin_gamma2 - margin_loss_23
+            margin_loss_23 = F.relu(margin_loss_23).sum()
+            loss += margin_loss_23 * args.triangle_margin_lambda
+
+            margin_loss_12 = torch.norm(segment_12, dim=1)
+            margin_loss_12 = args.margin_gamma2 - margin_loss_12
+            margin_loss_12 = F.relu(margin_loss_12).sum()
+            loss += margin_loss_12 * args.triangle_margin_lambda
+
+            stats['margin_loss_23'] = margin_loss_23.item()
+            stats['margin_loss_12'] = margin_loss_12.item()
+            stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+
         return loss, stats

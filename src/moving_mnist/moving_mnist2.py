@@ -1,3 +1,5 @@
+import random
+
 import h5py
 import numpy as np
 import torch
@@ -6,14 +8,19 @@ import torch.utils.data as data
 
 class MovingMNIST(data.Dataset):
     def __init__(self, train=True, seq_len=20, skip=1,
-                 image_size=64, colored=True, tiny=False):
+                 image_size=64, colored=True, tiny=False,
+                 is_triangle_loss=False):
+        self.is_triangle_loss = is_triangle_loss
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
-        self.data_handler = handler(seq_len, skip, image_size)
+        self.data_handler = handler(seq_len, skip, image_size,
+                                    is_triangle_loss=is_triangle_loss)
         if tiny:
             self.data_size = 64 * pow(2, 2)
         elif train:
-            self.data_size = 64 * pow(2, 12)
+            # self.data_size = 64 * pow(2, 12)
+            # NOTE: I changed this so that we can get more epochs.
+            self.data_size = 64 * pow(2, 8)
         else:
             self.data_size = 64 * pow(2, 5)
 
@@ -27,7 +34,8 @@ class MovingMNIST(data.Dataset):
 class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, seq_length = 20, skip=1, output_image_size=64):
+    def __init__(self, seq_length = 20, skip=1, output_image_size=64,
+                 is_triangle_loss=False):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
@@ -43,6 +51,7 @@ class _BouncingMNISTDataHandler(object):
 
         self.indices_ = np.arange(self.data_.shape[0])
         self.row_ = 0
+        self.is_triangle_loss = is_triangle_loss
         np.random.shuffle(self.indices_)
 
     def get_dims(self):
@@ -179,6 +188,18 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
 
         data = np.transpose(data, (0, 3, 1, 2))
         # These come out as [seq_len, 3, 64, 64]
+        if self.is_triangle_loss:
+            p = random.random()
+            # Sample three from somewhere in here, but allow for jumps of two.
+            if p > 0.75:
+                data = data[:3]
+            elif p > 0.5:
+                data = data[1:4]
+            elif p > 0.25:
+                data = data[2:]
+            else:
+                data = data[[0, 2, 4]]
+
         if self.output_image_size == self.image_size_:
             return data
         else:
