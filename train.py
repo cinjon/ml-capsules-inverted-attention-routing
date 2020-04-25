@@ -30,13 +30,14 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
+from torch.utils.data.sampler import SubsetRandomSampler, SequentialSampler
 import torchvision
 import torchvision.transforms as transforms
 
 import configs
 from src.moving_mnist.moving_mnist import MovingMNist
 from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
-from src import capsule_model
+# from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import GymnasticsVideo
@@ -223,6 +224,7 @@ def get_loaders(args):
             transforms.ToTensor(),
         ])
         train_set = GymnasticsRgbFrame(
+            args.indices_file,
             transforms=transforms_augment,
             train=True,
             skip_videoframes=args.skip_videoframes,
@@ -236,6 +238,7 @@ def get_loaders(args):
             tau_max=args.max_distance
         )
         test_set = GymnasticsRgbFrame(
+            args.indices_file,
             transforms=transforms_regular,
             train=False,
             skip_videoframes=args.skip_videoframes,
@@ -248,10 +251,17 @@ def get_loaders(args):
             tau_min=args.min_distance,
             tau_max=args.max_distance
         )
+
         train_loader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.batch_size, shuffle=True, collate_fn=gymnastics_flow_collate)
+            train_set,
+            batch_size=args.batch_size,
+            shuffle=True,
+            collate_fn=gymnastics_flow_collate)
         test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=args.batch_size, shuffle=False, collate_fn=gymnastics_flow_collate)
+            test_set,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=gymnastics_flow_collate)
         print("Batch size: ", args.batch_size, ' Loader size: ',
               len(train_loader), len(test_loader))
     elif args.dataset == 'gymnastics_flow':
@@ -532,6 +542,8 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     averages['accuracy'].item()
                 )
             elif criterion == 'reorder':
+                if images is None and labels is None:
+                    continue
                 images = images.to(device)
                 labels = labels.to(device)
                 loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
@@ -597,7 +609,7 @@ def main(args):
         num_frames = 4 if args.criterion == 'reorder2' else 3
         if args.use_resnet:
             net = ReorderResNet(
-                type=args.resnet_type, pretrained=args.resnet_pretrained)
+                resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
         else:
             net = capsule_time_model.CapsTimeModel(config['params'],
                                                    args.backbone,
@@ -877,6 +889,10 @@ if __name__ == '__main__':
                         default=False,
                         action='store_true',
                         help='whether to use pretrained resnet or not')
+    parser.add_argument('--indices_file',
+                        default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/abc/skipframe_1_indices.json',
+                        type=str,
+                        help='path of the GymnasticsRgbFrame indices file',)
 
     args = parser.parse_args()
     args.use_comet = (not args.no_use_comet) and (not args.debug)

@@ -1,5 +1,6 @@
 import getpass
 import os
+import json
 import pickle
 import random
 import shutil
@@ -13,7 +14,7 @@ import torchvision.transforms as transforms
 
 class GymnasticsRgbFrame(data.Dataset):
     """The video directory below is a directory of directories of frames."""
-    def __init__(self, transforms=None, train=True, skip_videoframes=5,
+    def __init__(self, indices_file, transforms=None, train=True, skip_videoframes=5,
                  num_videoframes=100, dist_videoframes=50,
                  video_directory=None, video_names=None,
                  is_reorder_loss=False, is_triangle_loss=False,
@@ -32,6 +33,7 @@ class GymnasticsRgbFrame(data.Dataset):
         print('Done copying the files over.')
 
         self.train = train
+        self.indices_file = indices_file
         self.transforms = transforms
         self.video_directory = video_directory
         self.skip_videoframes = skip_videoframes
@@ -43,6 +45,9 @@ class GymnasticsRgbFrame(data.Dataset):
         self.positive_ratio = positive_ratio
         self.tau_min = tau_min
         self.tau_max = tau_max
+
+        with open(self.indices_file, 'r') as f:
+            self.indices_dict = json.load(f)
 
         self.frame_directories = sorted([
             os.path.join(video_directory, f) for f in os.listdir(video_directory) \
@@ -83,17 +88,20 @@ class GymnasticsRgbFrame(data.Dataset):
         # The videos were originally taken at 25 fps.
         ret = []
         for directory in frame_directories:
+            video_name = os.path.basename(directory)
+            indices = self.indices_dict[video_name]
+
             total_frames = len([k for k in os.listdir(directory) \
                                 if k.endswith('npy')])
             frame_index = 0
             clip_index = 0
             while frame_index < total_frames:
                 end_index = frame_index + clip_length_in_frames
-                if end_index < total_frames:
+                if end_index < total_frames and frame_index in indices:
                     ret.append((directory, frame_index, clip_index))
+                    clip_index += 1
 
                 frame_index = end_index + frames_between_clips
-                clip_index += 1
         return ret
 
     def __getitem__(self, index):
@@ -140,6 +148,8 @@ class GymnasticsRgbFrame(data.Dataset):
             ssd_b_d = get_ssd(images[1], images[3])
 
             if not (min(ssd_a_b, ssd_d_e) > self.tau_min and ssd_b_d < self.tau_max):
+                print(index)
+                print(min(ssd_a_b, ssd_d_e), ssd_b_d)
                 return None
 
             use_positive = random.random() < self.positive_ratio
