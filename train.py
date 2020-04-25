@@ -35,9 +35,10 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
+import cinjon_jobs
+import zeping_jobs
 from src.moving_mnist.moving_mnist import MovingMNist
 from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
-# from src import capsule_model
 from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import GymnasticsVideo
@@ -81,7 +82,7 @@ def get_loaders(args):
                                                    shuffle=True,
                                                    num_workers=args.num_workers)
         test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                                  batch_size=192,
+                                                  batch_size=args.batch_size,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
         affnist_test_loader = None
@@ -99,7 +100,7 @@ def get_loaders(args):
                                                    shuffle=True,
                                                    num_workers=args.num_workers)
         test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                                  batch_size=192,
+                                                  batch_size=args.batch_size,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
         affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
@@ -170,11 +171,9 @@ def get_loaders(args):
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
-            test_set, batch_size=192, shuffle=False)
+            test_set, batch_size=args.batch_size, shuffle=False)
         affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=192, shuffle=False)
-        affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=192, shuffle=False)
+            affnist_test_set, batch_size=args.batch_size, shuffle=False)
     elif args.dataset == 'gymnastics':
         resize = args.resize
         transforms_augment_video = transforms.Compose([
@@ -237,6 +236,7 @@ def get_loaders(args):
             video_directory=args.gymnastics_video_directory,
             video_names=args.video_names.split(','),
             is_reorder_loss='reorder' in args.criterion,
+            is_triangle_loss='triangle' in args.criterion,
             positive_ratio=args.positive_ratio,
             tau_min=args.min_distance,
             tau_max=args.max_distance
@@ -251,6 +251,7 @@ def get_loaders(args):
             video_directory=args.gymnastics_video_directory,
             video_names=args.video_names.split(','),
             is_reorder_loss='reorder' in args.criterion,
+            is_triangle_loss='triangle' in args.criterion,
             positive_ratio=args.positive_ratio,
             tau_min=args.min_distance,
             tau_max=args.max_distance
@@ -363,19 +364,6 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     averages = {
         'loss': Averager()
     }
-    if criterion == 'nce':
-        averages['pos_sim'] = Averager()
-        averages['neg_sim'] = Averager()
-    elif criterion == 'bce':
-        averages['true_pos'] = Averager()
-        averages['num_targets'] = Averager()
-        true_positive_total = 0
-        num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2']:
-        averages['accuracy'] = Averager()
-        averages['objects_sim_loss'] = Averager()
-        averages['presence_sparsity_loss'] = Averager()
-        averages['ordering_loss'] = Averager()
 
     t = time.time()
     optimizer.zero_grad()
@@ -385,7 +373,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         if criterion == 'triplet':
             # NOTE: Zeping.
             images = images.to(device)
-            loss, stats = net.get_triplet_loss(images)
+            loss, stats = net.module.get_triplet_loss(images)
             averages['loss'].add(loss.item())
             positive_distance = stats['positive_distance']
             negative_distance = stats['negative_distance']
@@ -397,7 +385,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'bce':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_bce_loss(images, labels)
+            loss, stats = net.module.get_bce_loss(images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
             num_targets_total += stats['num_targets']
@@ -407,9 +395,11 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             )
         elif criterion == 'nce':
             images = images.to(device)
-            loss, stats = net.get_nce_loss(images, args)
+            loss, stats = net.module.get_nce_loss(images, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
                 averages[key].add(value)
             extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
                 averages['pos_sim'].item(), averages['neg_sim'].item()
@@ -417,9 +407,11 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'xent':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_xent_loss(images, labels)
+            loss, stats = net.module.get_xent_loss(images, labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
                 averages[key].add(value)
             extra_s = 'Acc: {:.5f}.'.format(
                 averages['accuracy'].item()
@@ -429,16 +421,31 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 continue
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
+            loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion == 'reorder2':
-            loss, stats = net.get_reorder_loss2(images, device, args, labels=labels)
+            loss, stats = net.module.get_reorder_loss2(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
+        elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
+                           'triangle_margin2', 'triangle_margin2_angle']:
+            images = images.to(device)
+            loss, stats = net.module.get_triangle_loss(images, device, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
@@ -460,9 +467,11 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                     comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
 
     train_loss = averages['loss'].item()
-    train_acc = averages['accuracy'].item()
+    train_acc = averages['accuracy'].item() if 'accuracy' in averages else None
 
     for key, value in stats.items():
+        if key not in averages:
+            averages[key] = Averager()
         averages[key].add(value)
     extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                          for k, v in averages.items()])
@@ -486,19 +495,6 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
     averages = {
         'loss': Averager()
     }
-    if criterion == 'nce':
-        averages['pos_sim'] = Averager()
-        averages['neg_sim'] = Averager()
-    elif criterion == 'bce':
-        averages['true_pos'] = Averager()
-        averages['num_targets'] = Averager()
-        true_positive_total = 0
-        num_targets_total = 0
-    elif criterion in ['xent', 'reorder', 'reorder2']:
-        averages['accuracy'] = Averager()
-        averages['objects_sim_loss'] = Averager()
-        averages['presence_sparsity_loss'] = Averager()
-        averages['ordering_loss'] = Averager()
 
     t = time.time()
     with torch.no_grad():
@@ -507,7 +503,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             if criterion == 'triplet':
                 # NOTE: Zeping.
                 images = images.to(device)
-                loss, stats = net.get_triplet_loss(images)
+                loss, stats = net.module.get_triplet_loss(images)
                 averages['loss'].add(loss.item())
                 positive_distance = stats['positive_distance']
                 negative_distance = stats['negative_distance']
@@ -519,7 +515,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'bce':
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.get_bce_loss(images, labels)
+                loss, stats = net.module.get_bce_loss(images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
                 num_targets_total += stats['num_targets']
@@ -529,18 +525,22 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 )
             elif criterion == 'nce':
                 images = images.to(device)
-                loss, stats = net.get_nce_loss(images, args)
+                loss, stats = net.module.get_nce_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = 'Pos sim: {:.5f} | Neg sim: {:.5f}.'.format(
                     averages['pos_sim'].item(), averages['neg_sim'].item()
                 )
             elif criterion == 'xent':
                 images = images.to(device)
-                loss, stats = net.get_xent_loss(images, args)
+                loss, stats = net.module.get_xent_loss(images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = 'Acc: {:.5f}.'.format(
                     averages['accuracy'].item()
@@ -550,16 +550,31 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     continue
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.get_reorder_loss(images, device, args, labels=labels)
+                loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
             elif criterion == 'reorder2':
-                loss, stats = net.get_reorder_loss2(images, device, args)
+                loss, stats = net.module.get_reorder_loss2(images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items()])
+            elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
+                               'triangle_margin2', 'triangle_margin2_angle']:
+                images = images.to(device)
+                loss, stats = net.module.get_triangle_loss(images, device, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
@@ -572,6 +587,8 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 t = time.time()
 
         for key, value in stats.items():
+            if key not in averages:
+                averages[key] = Averager()
             averages[key].add(value)
         extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                              for k, v in averages.items()])
@@ -586,7 +603,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 epoch_avgs = {k: v.item() for k, v in averages.items()}
                 comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
 
-    test_acc = averages['accuracy'].item()
+    test_acc = averages['accuracy'].item() if 'accuracy' in averages else None
     return test_loss, test_acc
 
 
@@ -648,15 +665,16 @@ def main(args):
     print('Total Params %d' % total_params)
 
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-    store_dir = os.path.join(args.results_dir, today)
+    if args.name and args.counter is not None:
+        store_dir = os.path.join(args.results_dir, args.name,
+                                 str(args.counter), today)
+    else:
+        store_dir = os.path.join(args.results_dir, today)
     if not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
     net = net.to(device)
-    if device == 'cuda':
-        if args.num_gpus > 1:
-            net = torch.nn.DataParallel(net)
-        cudnn.benchmark = True
+    net = torch.nn.DataParallel(net)
 
     best_negative_distance = 0
     if args.resume_dir and not args.debug:
@@ -674,6 +692,9 @@ def main(args):
         'affnist_acc': [],
         'train_acc': [],
         'test_acc': [],
+        'affnist_loss': [],
+        'train_loss': [],
+        'test_loss': [],
     }
 
     total_epochs = args.epoch
@@ -695,6 +716,8 @@ def main(args):
         comet_params = vars(args)
         user = 'cinjon' if getpass.getuser() == 'resnick' else 'zeping'
         comet_params['user_name'] = user
+        if args.counter is not None and args.name is not None:
+            comet_exp.set_name('%s-%d' % (args.name, args.counter))
         comet_exp.log_parameters(vars(args))
     else:
         comet_exp = None
@@ -711,16 +734,24 @@ def main(args):
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
-        print('Train Acc %.4f.' % train_acc)
-        results['train_acc'].append(train_acc)
+        # if train_acc is not None:
+        #     print('Train Acc %.4f.' % train_acc)
+        #     results['train_acc'].append(train_acc)
+        # else:
+        #     print('Train Loss %.4f.' % train_loss)
+        #     results['train_loss'].append(train_loss)
 
         if scheduler:
             scheduler.step()
 
         if epoch % 5 == 0:
             test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir, comet_exp=comet_exp)
-            print('Test Acc %.4f.' % test_acc)
-            results['test_acc'].append(test_acc)
+            # if test_acc is not None:
+            #     print('Test Acc %.4f.' % test_acc)
+            #     results['test_acc'].append(test_acc)
+            # else:
+            #     print('Test Loss %.4f.' % test_loss)
+            #     results['test_loss'].append(test_loss)
 
             if not args.debug and epoch >= last_saved_epoch + 10 and \
                last_test_loss > test_loss:
@@ -735,7 +766,9 @@ def main(args):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-        if args.dataset in ['affnist', 'MovingMNist2'] and test_acc >= .9875 and train_acc >= .9875 and epoch > 0:
+        if 'triangle' not in args.criterion and \
+           args.dataset in ['affnist', 'MovingMNist2'] and test_acc >= .9875 \
+           and train_acc >= .9875 and epoch > 0:
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
@@ -754,6 +787,14 @@ if __name__ == '__main__':
         description='Training Capsules using Inverted Dot-Product Attention Routing'
     )
 
+    parser.add_argument('--mode',
+                        default='run',
+                        type=str,
+                        help='mode to use, either run or jobarray')
+    parser.add_argument('--counter', type=int, default=None,
+                        help='the counter when running with slurm')
+    parser.add_argument('--name', type=str, default=None,
+                        help='the name when running with slurm')
     parser.add_argument('--resume_dir',
                         '-r',
                         default='',
@@ -852,6 +893,28 @@ if __name__ == '__main__':
                         default=1.,
                         type=float,
                         help='the lambda on the presence L1.')
+
+    # Triangle
+    parser.add_argument('--triangle_lambda',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the distance between first and third frames.')
+    parser.add_argument('--triangle_cos_lambda',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the cos between first and third frames.')
+    parser.add_argument('--triangle_margin_lambda',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the margin between first and third frames.')
+    parser.add_argument('--margin_gamma',
+                        default=1.,
+                        type=float,
+                        help='the gamma margin on how minimal we want ac')
+    parser.add_argument('--margin_gamma2',
+                        default=.5,
+                        type=float,
+                        help='the gamma margin on how minimal we want ab/bc.')
 
     # VideoClip info
     parser.add_argument('--num_videoframes', type=int, default=100)
