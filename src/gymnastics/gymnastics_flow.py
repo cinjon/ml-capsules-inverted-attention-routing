@@ -132,8 +132,10 @@ class GymnasticsFlow(torch.utils.data.Dataset):
         return len(self.folder_paths)
 
 def gymnastics_flow_collate(batch):
-    imgs = torch.stack([item[0] for item in batch if item[0] is not None])
-    lbl = torch.stack([torch.tensor(item[1]) for item in batch if item[0] is not None])
+    if not any(batch):
+        return None
+    imgs = torch.stack([item[0] for item in batch if item is not None])
+    lbl = torch.stack([torch.tensor(item[1]) for item in batch if item is not None])
     return [imgs, lbl]
 
 

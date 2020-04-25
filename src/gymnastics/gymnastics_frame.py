@@ -16,7 +16,8 @@ class GymnasticsRgbFrame(data.Dataset):
     def __init__(self, transforms=None, train=True, skip_videoframes=5,
                  num_videoframes=100, dist_videoframes=50,
                  video_directory=None, video_names=None,
-                 is_reorder_loss=False, is_triangle_loss=False):
+                 is_reorder_loss=False, is_triangle_loss=False,
+                 positive_ratio=0.5, tau_min=15, tau_max=60):
         print('Copying the files over ...', video_names)
         user = getpass.getuser()
         path = '/scratch/%s/gymnastics/frames' % user
@@ -39,6 +40,9 @@ class GymnasticsRgbFrame(data.Dataset):
         self.is_reorder_loss = is_reorder_loss
         self.is_triangle_loss = is_triangle_loss
         self.is_normal_video = not is_reorder_loss and not is_triangle_loss
+        self.positive_ratio = positive_ratio
+        self.tau_min = tau_min
+        self.tau_max = tau_max
 
         self.frame_directories = sorted([
             os.path.join(video_directory, f) for f in os.listdir(video_directory) \
@@ -128,20 +132,44 @@ class GymnasticsRgbFrame(data.Dataset):
             else:
                 selection = sample[2:]
         else:
-            use_positive = random.random() > 0.5
-            if use_positive:
-                # frames (b, c, d) or (d, c, b)
-                selection = sample[1:4]
-            elif random.random() > 0.5:
-                # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
-                selection = [sample[1], sample[0], sample[3]]
-            else:
-                selection = [sample[1], sample[4], sample[3]]
+            images = [frames[sample[i]] for i in range(len(sample))]
+            images = torch.stack([self.transforms(img) for img in images])
+            # Compare ssd to tau
+            ssd_a_b = get_ssd(images[0], images[1])
+            ssd_d_e = get_ssd(images[3], images[4])
+            ssd_b_d = get_ssd(images[1], images[3])
 
-        images = [frames[k] for k in selection]
-        video = torch.stack([self.transforms(frame) for frame in images])
-        # NOTE: selection, e.g. [1,2,3], then images.shape = [bs, 3, 3, 128, 128]
+            if not (min(ssd_a_b, ssd_d_e) > self.tau_min and ssd_b_d < self.tau_max):
+                return None
+
+            use_positive = random.random() < self.positive_ratio
+            if use_positive:
+                video = images[1:4]
+            elif random.random() > 0.5:
+                video = torch.stack([images[1], images[0], images[3]])
+            else:
+                video = torch.stack([images[1], images[4], images[3]])
+
+
+        #     use_positive = random.random() < self.positive_ratio
+        #     if use_positive:
+        #         # frames (b, c, d) or (d, c, b)
+        #         selection = sample[1:4]
+        #     elif random.random() > 0.5:
+        #         # frames (b, a, d), (d, a, b), (b, e, d), or (d, e, b)
+        #         selection = [sample[1], sample[0], sample[3]]
+        #     else:
+        #         selection = [sample[1], sample[4], sample[3]]
+        #
+        # images = [frames[k] for k in selection]
+        # video = torch.stack([self.transforms(frame) for frame in images])
+        # # NOTE: selection, e.g. [1,2,3], then images.shape = [bs, 3, 3, 128, 128]
 
         label = float(use_positive)
         return video, label
 
+def get_ssd(a, b):
+    if isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor):
+        return torch.sum(torch.pow(a - b, 2)).item()
+    elif isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        return np.sum(np.power(a - b, 2))
