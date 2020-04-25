@@ -87,9 +87,13 @@ def get_loaders(args):
         affnist_test_loader = None
     elif args.dataset == 'MovingMNist2':
         train_set = MovingMNist2(train=True, seq_len=5, image_size=64,
-                                 colored=True, tiny=False)
+                                 colored=args.colored, tiny=False,
+                                 is_triangle_loss='triangle' in args.criterion,
+                                 num_digits=args.num_mnist_digits)
         test_set = MovingMNist2(train=False, seq_len=5, image_size=64,
-                                colored=True, tiny=False)
+                                colored=args.colored, tiny=False,
+                                is_triangle_loss='triangle' in args.criterion,
+                                num_digits=args.num_mnist_digits)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -107,7 +111,7 @@ def get_loaders(args):
             ])
         )
         affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=192, shuffle=False)
+            affnist_test_set, batch_size=args.batch_size, shuffle=False)
     elif args.dataset == 'mnist':
         train_set = torchvision.datasets.MNIST(
             args.data_root, train=True, download=True,
@@ -605,24 +609,20 @@ def main(args):
     train_loader, test_loader, affnist_test_loader = get_loaders(args)
 
     print('==> Building model..')
-    if args.criterion in ['reorder', 'reorder2']:
-        num_frames = 4 if args.criterion == 'reorder2' else 3
-        if args.use_resnet:
-            net = ReorderResNet(
-                resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
-        else:
-            net = capsule_time_model.CapsTimeModel(config['params'],
-                                                   args.backbone,
-                                                   args.dp,
-                                                   args.num_routing,
-                                                   sequential_routing=args.sequential_routing,
-                                                   num_frames=num_frames)
+    num_frames = 4 if args.criterion == 'reorder2' else 3
+    is_discriminating_model = not ('reorder' in args.criterion or 'triangle' in args.criterion)
+    if args.use_resnet:
+        if args.criterion not in ['reorder', 'reorder2']:
+            raise
+        net = ReorderResNet(resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
     else:
-        net = capsule_model.CapsModel(config['params'],
-                                      args.backbone,
-                                      args.dp,
-                                      args.num_routing,
-                                      sequential_routing=args.sequential_routing)
+        net = capsule_time_model.CapsTimeModel(config['params'],
+                                               args.backbone,
+                                               args.dp,
+                                               args.num_routing,
+                                               sequential_routing=args.sequential_routing,
+                                               num_frames=num_frames,
+                                               is_discriminating_model=is_discriminating_model)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -717,7 +717,7 @@ def main(args):
         if scheduler:
             scheduler.step()
 
-        if epoch % 25 == 0:
+        if epoch % 5 == 0:
             test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir, comet_exp=comet_exp)
             print('Test Acc %.4f.' % test_acc)
             results['test_acc'].append(test_acc)
@@ -894,7 +894,30 @@ if __name__ == '__main__':
                         type=str,
                         help='path of the GymnasticsRgbFrame indices file',)
 
+    # MovingMNist 2 info
+    parser.add_argument('--no_colored', action='store_true',
+                        help='whether to not use colored mnist')
+    parser.add_argument('--num_mnist_digits', type=int, default=2,
+                        help='the number of digits to use in moving mnist.')
+
     args = parser.parse_args()
+    if args.mode == 'jobarray':
+        jobid = int(os.getenv('SLURM_ARRAY_TASK_ID'))
+        user = 'cinjon' if getpass.getuser() == 'resnick' else 'zeping'
+        if user == 'cinjon':
+            counter, job = cinjon_jobs.run(find_counter=jobid)
+        elif user == 'zeping':
+            counter, job = zeping_jobs.run(find_counter=jobid)
+        else:
+            raise
+
+        for key, value in job.items():
+            setattr(args, key, value)
+        print(counter, job, '\n', args, '\n')
+
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
+    args.colored = not args.no_colored
+    print(args.colored, args.no_colored)
+
     main(args)

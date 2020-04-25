@@ -9,12 +9,15 @@ import torch.utils.data as data
 class MovingMNIST(data.Dataset):
     def __init__(self, train=True, seq_len=20, skip=1,
                  image_size=64, colored=True, tiny=False,
-                 is_triangle_loss=False):
+                 is_triangle_loss=False, num_digits=2):                 
         self.is_triangle_loss = is_triangle_loss
+
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
-        self.data_handler = handler(seq_len, skip, image_size,
-                                    is_triangle_loss=is_triangle_loss)
+        self.data_handler = handler(
+            seq_len, skip, image_size, is_triangle_loss=is_triangle_loss,
+            num_digits=num_digits)
+            
         if tiny:
             self.data_size = 64 * pow(2, 2)
         elif train:
@@ -35,12 +38,12 @@ class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
     def __init__(self, seq_length = 20, skip=1, output_image_size=64,
-                 is_triangle_loss=False):
+                 is_triangle_loss=False, num_digits=2):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
         self.output_image_size = output_image_size
-        self.num_digits_ = 2
+        self.num_digits_ = num_digits
         self.step_length_ = 0.035 # NOTE: was 0.1
 
         self.digit_size_ = 28
@@ -127,7 +130,9 @@ class _BouncingMNISTDataHandler(object):
 
         # minibatch data
         data = np.zeros((self.seq_length_,
-                         self.image_size_, self.image_size_), dtype=np.float32)
+                         self.image_size_,
+                         self.image_size_),
+                        dtype=np.float32)
 
         for n in range(self.num_digits_):
 
@@ -148,10 +153,25 @@ class _BouncingMNISTDataHandler(object):
                 data[i, top:bottom, left:right] = self.overlap(
                     data[i, top:bottom, left:right], digit_image)
 
+        data = data[:, None, :, :]
+        # These come out as [seq_len, 3, 64, 64]
+        if self.is_triangle_loss:
+            p = random.random()
+            # Sample three from somewhere in here, but allow for jumps of two.
+            if p > 0.75:
+                data = data[:3]
+            elif p > 0.5:
+                data = data[1:4]
+            elif p > 0.25:
+                data = data[2:]
+            else:
+                data = data[[0, 2, 4]]
+
         if self.output_image_size == self.image_size_:
-            return data
+            ret = data
         else:
-            return self.resize(data, self.output_image_size)
+            ret = self.resize(data, self.output_image_size)
+        return ret
 
 
 class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):

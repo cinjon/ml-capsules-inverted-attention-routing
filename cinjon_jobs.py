@@ -204,7 +204,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -223,7 +223,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -241,6 +241,195 @@ def run(find_counter=None):
         'triangle_margin_lambda': [.1, .3, 1., 3]
     }
     time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # The hinge loss on ab and bc and then optimizing the angle directly didnt
+    # work very well. The model ended up focusing on the hinges a lot more and
+    # didn't really push the angle enough. This could be becuase the gamma on
+    # the hinge was too high. We see that the loss on the hinge loss got really
+    # low, so the model certainly emphasize that even when it had a 0.1 lambda
+    # on that loss.
+    # Here, we try this with smaller margin_gamma2 (0.05, 0.1), plus a range of
+    # learning rate gammas of [0.3, 0.5] (instead of just 0.1).
+    # Counter: 94
+    job.update({
+        'criterion': 'triangle_margin2_angle'
+    })
+    var_arrays = {
+        'lr': [.001],
+        'schedule_milestones': ['10,30', '30'],
+        'triangle_margin_lambda': [.1, .3, 1.],
+        'margin_gamma2': [0.05, 0.1],
+        'schedule_gamma': [0.3, 0.5]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # triangle margin2, which is putting the margin on ab and bc rather than ac.
+    # We try the 0.1, 0.3 triangle_margin_lambdas with schedules of 10,30 and
+    # gammas of 0.3, 0.5.
+    # Counter: 118
+    job.update({
+        'criterion': 'triangle_margin2'
+    })
+    var_arrays = {
+        'lr': [.001],
+        'schedule_milestones': ['10,30'],
+        'triangle_margin_lambda': [.1, .3],
+        'schedule_gamma': [0.3, 0.5],
+        'margin_gamma2': [0.5, 0.1]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we do triangle margin, but with reduced hinge … more like
+    # 0.05, 0.1, and 0.3 rather than 1. The problem is that shit is overfitting.
+    # Counter: 126
+    # NOTE: The 0.3 ones didn't get off.
+    job.update({
+        'criterion': 'triangle_margin'
+    })
+    var_arrays = {
+        'margin_gamma': [0.05, 0.1, 0.3],
+        'lr': [.001],
+        'schedule_milestones': ['10,30'],
+        'triangle_margin_lambda': [.1, .3]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # hinge_loss on ac and optimize the angle, with weight decay.
+    # Counter: 132
+    job.update({
+        'name': '2020.04.23',
+        'criterion': 'triangle_margin2_angle',
+        'weight_decay': 5e-4,
+        'schedule_milestones': '10,30',
+        'lr': 1e-3
+    })
+    var_arrays = {
+        'triangle_margin_lambda': [.1, .3],
+        'margin_gamma2': [0.1, 0.3],
+        'schedule_gamma': [0.3]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # Counter: 136
+    # triangle margin2: hinge loss on ab and bc rather than ac, with optimizing
+    # the expression. ... And weight decay.
+    job.update({
+        'criterion': 'triangle_margin2'
+    })
+    var_arrays = {
+        'triangle_margin_lambda': [.1, .3],
+        'margin_gamma2': [0.1, 0.3],
+        'schedule_gamma': [0.3],
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # triangle margin with weight decay
+    # NOTE: The 0.3 ones didn't get off before and the .05 were similar to 0.1,
+    # so we redo the 0.3 ones here.
+    # Counter: 140
+    job.update({
+        'criterion': 'triangle_margin'
+    })
+    var_arrays = {
+        'margin_gamma': [0.1, 0.3],
+        'triangle_margin_lambda': [.1, .3],
+        'schedule_gamma': [0.3],
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # NOTE: We fucked up before and weren't doing the right thing for these jobs.
+    # So now we are fixing that and redoing some of them again to see if they
+    # were at all on the right track.
+    # NOTE: The problem was that they were using is_discriminating_model's
+    # output, so they were going through a final_fc pose to the number of classes.
+    # This might actually be a good idea, but it sucks for the exact thing we
+    # were trying to accomplish.
+    # Counter: 144
+    job.update({
+        'name': '2020.04.25',
+        'config': 'resnet_backbone_movingmnist2_2cc',
+        'schedule_milestones': '10,30',
+        'lr': 1e-3,
+        'schedule_gamma': 0.3,
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin2', 'triangle_margin2_angle', 'triangle_margin'],
+        'triangle_margin_lambda': [.1, .3],
+        'margin_gamma2': [0.1, 0.3],
+        'weight_decay': [0, 5e-4]
+    }
+    time = 8
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # NOTE: Same as above jobs, except now we are doing it on single digit
+    # MovingMNist2, along with grayscale (so one channel), and using the 1cc
+    # config, which has only one capsule at the end. This might not work.
+    # We are also putting all the criterions into one:
+    # triangle_margin2_angle: hinge_loss on ac and optimize the angle.
+    # triangle_margin2: hinge loss on ab and bc, plus optimize the triagnle expr.
+    # triangle_margin: hinge loss on ac, plus optimize the triagnle expr.
+    # Counter: 144
+    job.update({
+        'name': '2020.04.25',
+        'config': 'resnet_backbone_movingmnist2_2ccgray',
+        'schedule_milestones': '10,30',
+        'lr': 1e-3,
+        'schedule_gamma': 0.3,
+        'no_colored': True,
+        'num_mnist_digits': 1,
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin2', 'triangle_margin2_angle', 'triangle_margin'],
+        'triangle_margin_lambda': [.1, .3],
+        'margin_gamma2': [0.1, 0.3],
+        'weight_decay': [0, 5e-4]
+    }
+    time = 8
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)

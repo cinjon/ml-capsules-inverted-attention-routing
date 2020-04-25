@@ -218,14 +218,17 @@ class CapsTimeModel(nn.Module):
         if return_embedding:
             out = pose
             if flatten:
-                return out.view(out.size(0), -1)
+                ret = out.view(out.size(0), -1)
             else:
-                return out
+                ret = out
+            return ret
         elif self.get_mnist_head:
             out = pose
             out = self.mnist_classifier_head(out).squeeze()
+            return out
         elif self.is_discriminating_model:
-            return self.final_fc(pose).squeeze()
+            ret = self.final_fc(pose).squeeze()
+            return ret
         else:
             # return pose, presence, object_
             return pose
@@ -513,18 +516,13 @@ class CapsTimeModel(nn.Module):
 
     def get_triangle_loss(self, images, device, args):
         batch_size, num_images = images.shape[:2]
-        # We compute the ssd to check the max margin between the frames on
-        # either side. This is for stats.
-        # with torch.no_grad():
-        #     ssd = (images[:, 0] - images[:, 2])**2
-        #     ssd = ssd.sum((1, 2, 3))
-        #     print('SSSD SHAPE: ', ssd.shape)
-        #     ssd = ssd.mean(0)
-        #     print('SSSD final: ', ssd)
 
         # Change view so that we can put everything through the model at once.
         images = images.view(batch_size * num_images, *images.shape[2:])
         pose = self(images)
+        # With 2channel, this is torch.Size([12, 3, 2, 36]).
+        # With 1channel, it is torch.Size([12, 5, 2, 36])
+        # NOTE: This is ... [bs, ni, 2] when doing the 1channel... is that right?
         pose = pose.view(batch_size, num_images, *pose.shape[1:])
 
         sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
