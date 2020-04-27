@@ -401,7 +401,7 @@ def run(find_counter=None):
     time = 8
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -432,9 +432,30 @@ def run(find_counter=None):
     time = 8
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Same as above, but using mroe capsules in output.
+    # Counter: 192
+    job.update({
+        'name': '2020.04.26',
+        'config': 'resnet_backbone_movingmnist2_10ccgray',
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin2', 'triangle_margin2_angle', 'triangle_margin'],
+        'triangle_margin_lambda': [.1, .3],
+        'margin_gamma2': [0.1, 0.3],
+        'weight_decay': [0]
+    }
+    time = 6
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
+
 
     return None, None
             
