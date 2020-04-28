@@ -1,17 +1,6 @@
 """
-
-Sample Command:
-python train.py --criterion bce --results_dir /.../resnick/vidcaps/results \
---debug --data_root /.../resnick/vidcaps/MovingMNist --batch_size 32 \
---config resnet_backbone_movingmnist2
-
-Using rgb frames with 5 videoframes, skipping 12, so spans 48 frames (~2s).
-The dist_videoframes = -35 means we will then slide a window over 13 frames (~.5s).
-python train.py --results_dir /misc/kcgscratch1/ChoGroup/resnick/vidcaps/results \
-  --dataset gymnasticsRgbFrame --batch_size 8  --num_videoframes 5 \
-  --skip_videoframes 12 --dist_videoframes -35  --resize 128  --num_workers 4 \
-  --gymnastics_video_directory /misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/frames \
-  --video_names 2628 --criterion reorder
+NOTE: This is just here to build in linpred_train while other models are trying
+to launch.
 """
 
 import os
@@ -35,6 +24,7 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
+import linpred_train
 import cinjon_jobs
 import zeping_jobs
 from src.moving_mnist.moving_mnist import MovingMNist
@@ -772,9 +762,18 @@ def main(args):
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
-
+        
         if comet_exp:
             comet_exp.log_epoch_end(epoch)
+
+        if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
+            print('\n***\nStarting MNist Test (%d)\n***' % epoch)
+            linpred_train.run_ssl_model(
+                net, comet_exp, args.mnist_batch_size, args.colored,
+                args.num_workers, config['params'], args.backbone,
+                args.num_routing, num_frames, args.mnist_lr,
+                args.mnist_weight_decay)
+            print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
         if not args.debug:
             with open(store_file, 'wb') as f:
@@ -803,6 +802,26 @@ if __name__ == '__main__':
     parser.add_argument('--no_use_comet',
                         action='store_true',
                         help='use comet or not')
+    parser.add_argument('--do_mnist_test_every',
+                        default=None, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'every this many epochs.')
+    parser.add_argument('--do_mnist_test_after',
+                        default=10, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'starting at this epoch.')
+    parser.add_argument('--mnist_batch_size',
+                        default=16,
+                        type=int,
+                        help='number of batch size')
+    parser.add_argument('--mnist_lr',
+                        default=0.1,
+                        type=float,
+                        help='number of batch size')
+    parser.add_argument('--mnist_weight_decay',
+                        default=5e-4,
+                        type=float,
+                        help='weight decay')
     parser.add_argument('--num_routing',
                         default=1,
                         type=int,
@@ -981,6 +1000,6 @@ if __name__ == '__main__':
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
     args.colored = not args.no_colored
-    print(args.colored, args.no_colored)
+    print(args.colored, args.no_colored, args.debug, args.use_comet)
 
     main(args)
