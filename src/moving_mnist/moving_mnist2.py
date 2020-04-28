@@ -1,9 +1,12 @@
+import gzip
+import os
 import random
 
 import h5py
 import numpy as np
 import torch
 import torch.utils.data as data
+from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
 class MovingMNIST(data.Dataset):
@@ -16,7 +19,7 @@ class MovingMNIST(data.Dataset):
             _BouncingMNISTDataHandler
         self.data_handler = handler(
             seq_len, skip, image_size, is_triangle_loss=is_triangle_loss,
-            num_digits=num_digits)
+            num_digits=num_digits, train=train)
             
         if tiny:
             self.data_size = 64 * pow(2, 2)
@@ -28,7 +31,10 @@ class MovingMNIST(data.Dataset):
             self.data_size = 64 * pow(2, 5)
 
     def __getitem__(self, index):
-        return torch.from_numpy(self.data_handler.get_item()), index
+        datum, label = self.data_handler.get_item()
+        datum = torch.from_numpy(datum)
+        label = torch.from_numpy(np.array(label))
+        return datum, label
 
     def __len__(self):
         return self.data_size
@@ -38,7 +44,7 @@ class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
     def __init__(self, seq_length = 20, skip=1, output_image_size=64,
-                 is_triangle_loss=False, num_digits=2):
+                 is_triangle_loss=False, num_digits=2, train=True):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
@@ -49,13 +55,51 @@ class _BouncingMNISTDataHandler(object):
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
 
-        with h5py.File('/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/mnist.h5', 'r') as f:
-            self.data_ = f['train'][()].reshape(-1, 28, 28)
+        data, labels = self.load_dataset(train)
+        self.data_ = data
+        self.labels_ = labels
+
+        # with h5py.File('/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/mnist.h5', 'r') as f:
+        #     key = 'train' if train else 'test'
+        #     self.data_ = f[key][()].reshape(-1, 28, 28)
 
         self.indices_ = np.arange(self.data_.shape[0])
         self.row_ = 0
         self.is_triangle_loss = is_triangle_loss
         np.random.shuffle(self.indices_)
+
+    def load_dataset(self, train):
+        img_filename = "train-images-idx3-ubyte.gz" if train\
+            else "t10k-images-idx3-ubyte.gz"
+        lbl_filename = "train-labels-idx1-ubyte.gz" if train\
+            else "t10k-labels-idx1-ubyte.gz"
+
+        # Download data if not exist
+        root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/'
+        makedir_exist_ok(root)
+        img_filepath = self.download(root, img_filename)
+        lbl_filepath = self.download(root, lbl_filename)
+
+        # Load image data
+        with gzip.open(img_filepath, "rb") as f:
+            img_data = np.frombuffer(f.read(), np.uint8, offset=16)
+        img_data = img_data.reshape(-1, 1, 28, 28)
+        img_data = img_data.astype(np.float) / 255.
+
+        # Load label data
+        with gzip.open(lbl_filepath, "rb") as f:
+            lbl_data = np.frombuffer(f.read(), np.uint8, offset=8)
+        lbl_data = lbl_data.astype(np.int)
+        return img_data, lbl_data
+
+    @staticmethod
+    def download(root, filename):
+        filepath = os.path.join(root, filename)
+        if not os.path.exists(filepath):
+            print("http://yann.lecun.com/exdb/mnist/" + filename)
+            download_url("http://yann.lecun.com/exdb/mnist/" + filename,
+                         root=root)
+        return filepath
 
     def get_dims(self):
         return self.frame_size_
@@ -134,6 +178,7 @@ class _BouncingMNISTDataHandler(object):
                          self.image_size_),
                         dtype=np.float32)
 
+        label = []
         for n in range(self.num_digits_):
 
             # get random digit from dataset
@@ -143,6 +188,7 @@ class _BouncingMNISTDataHandler(object):
                 self.row_ = 0
                 np.random.shuffle(self.indices_)
             digit_image = self.data_[ind, :, :]
+            label.append(self.labels_[ind])
 
             # generate video
             for i in range(self.seq_length_):
@@ -171,7 +217,8 @@ class _BouncingMNISTDataHandler(object):
             ret = data
         else:
             ret = self.resize(data, self.output_image_size)
-        return ret
+
+        return ret, label
 
 
 class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
@@ -181,6 +228,7 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
         start_y, start_x = self.get_random_trajectory(self.num_digits_)
 
         # minibatch data
+        label = []
         data = np.zeros((self.seq_length_, 
                          self.image_size_, 
                          self.image_size_,
@@ -196,6 +244,7 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
                 self.row_ = 0
                 np.random.shuffle(self.indices_)
             digit_image = self.data_[ind, :, :]
+            label.append(self.labels_[ind])
 
             # generate video
             for i in range(self.seq_length_):
@@ -221,7 +270,8 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
                 data = data[[0, 2, 4]]
 
         if self.output_image_size == self.image_size_:
-            return data
+            ret = data
         else:
             ret = self.resize(data, self.output_image_size)
-            return ret
+
+        return ret, label
