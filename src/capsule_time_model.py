@@ -145,9 +145,11 @@ class CapsTimeModel(nn.Module):
 
         self.get_mnist_head = mnist_classifier_head
         if mnist_classifier_head:
-            self.mnist_classifier_head = nn.Linear(params['class_capsules']['caps_dim'], 1)
+            num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
+            self.mnist_classifier_head = nn.Linear(num_params, 10)
 
-    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False, flatten=False):
+    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False,
+                flatten=False, return_mnist_head=False):
         #### Forward Pass
         ## Backbone (before capsule)
         c = self.pre_caps(x)
@@ -222,13 +224,14 @@ class CapsTimeModel(nn.Module):
             else:
                 ret = out
             return ret
-        elif self.get_mnist_head:
-            out = pose
-            out = self.mnist_classifier_head(out).squeeze()
-            return out
         elif self.is_discriminating_model:
             ret = self.final_fc(pose).squeeze()
             return ret
+        elif return_mnist_head:
+            pose_shape = pose.shape
+            out = pose.view(pose_shape[0], -1)
+            out = self.mnist_classifier_head(out)
+            return out, pose
         else:
             # return pose, presence, object_
             return pose
