@@ -5,7 +5,7 @@ python linpred_train.py --criterion xent --resume_dir /.../resnick/vidcaps/resul
 --debug --data_root /.../resnick/vidcaps --batch_size 32 --num_routing 1
 --dataset affnist --test_only --debug --checkpoint_epoch 2 --config resnet_backbone_mnist
 """
-
+import copy
 import os
 import json
 import time
@@ -24,7 +24,8 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
-from src import capsule_model
+from src import capsule_time_model
+from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
 from src.affnist import AffNist
 
 
@@ -42,9 +43,11 @@ class Averager():
         return self.v
 
 
-def get_loaders(args):
-    mnist_root = os.path.join(args.data_root, 'mnist')
-    affnist_root = os.path.join(args.data_root, 'affnist')
+def get_loaders(args=None, data_root=None, batch_size=None):
+    batch_size = batch_size or args.batch_size
+    data_root = data_root or args.data_root
+    mnist_root = os.path.join(data_root, 'mnist')
+    affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
     mnist_train_transforms = [
         transforms.Pad(12),
         transforms.RandomCrop(40),
@@ -84,50 +87,122 @@ def get_loaders(args):
     return train_loader, test_loader, affnist_loader
 
 
-# Training
-def train(epoch, net, optimizer, criterion, loader, args, device):
-    print('\n***\nStarted training on epoch %d.\n***\n' % (epoch+1))
+def run_ssl_model(model, comet_exp, batch_size, colored, num_workers,
+                  config_params, backbone, num_routing, num_frames, lr,
+                  weight_decay):
+    train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
+                             colored=colored, tiny=False, num_digits=1)
+    test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
+                            colored=colored, tiny=False, num_digits=1)
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=batch_size,
+                                               shuffle=True,
+                                               num_workers=num_workers)
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=batch_size,
+                                              shuffle=False,
+                                              num_workers=num_workers)
+    affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+    affnist_test_set = AffNist(
+        affnist_root, train=False, subset=False,
+        transform=transforms.Compose([
+            transforms.Pad(12),
+            transforms.ToTensor(),
+        ])
+    )
+    affnist_test_loader = torch.utils.data.DataLoader(
+        affnist_test_set, batch_size=batch_size, shuffle=False)
 
+    dp = 0.0
+    net = capsule_time_model.CapsTimeModel(config_params,
+                                           backbone,
+                                           dp,
+                                           num_routing,
+                                           sequential_routing=False,
+                                           num_frames=num_frames,
+                                           mnist_classifier_head=True)
+
+    optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
+    net.to('cuda')
+    net = torch.nn.DataParallel(net)
+
+    current_state_dict = net.state_dict()
+    trained_state_dict = model.state_dict()
+    current_state_dict.update(trained_state_dict)
+    net.load_state_dict(current_state_dict)
+    for name, param in net.named_parameters():
+        if 'mnist_classifier' not in name:
+            param.requires_grad = False
+
+    start_epoch = 0
+    total_epochs = 50
+    for epoch in range(start_epoch, start_epoch + total_epochs):
+        train_loss, train_acc = train(epoch, net, optimizer, train_loader)
+        if comet_exp is not None:
+            with comet_exp.train():
+                comet_exp.log_metrics({'acc/mnist': train_acc, 'loss/mnist': train_loss})
+
+        test_loss, test_acc = test(epoch, net, test_loader)
+        if test_acc > .9:
+            affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader)
+
+        if comet_exp is not None:
+            with comet_exp.test():
+                comet_exp.log_metrics({
+                    'acc/mnist': test_acc, 'loss/mnist': test_loss,
+                    'acc/affnist': affnist_acc, 'loss/affnist': affnist_loss
+                })
+
+        loss_str = 'Train Loss %.6f, Test Loss %.6f, Affnist Loss %.6f' % (
+            train_loss, test_loss, affnist_loss
+        )
+        acc_str = 'Train Acc %.6f, Test Acc %.6f, Affnist Acc %.6f' % (
+            train_acc, test_acc, affnist_acc
+        )
+        print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
+
+
+def get_mnist_loss(model, images, labels):
+    batch_size, num_images = images.shape[:2]
+
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    output, poses = model(images, return_mnist_head=True)
+    labels = labels.squeeze()
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
+    return loss, stats
+
+
+# Training
+def train(epoch, net, optimizer, loader):
     net.train()
 
     averages = {
         'loss': Averager()
     }
-    if criterion == 'bce':
-        averages['true_pos'] = Averager()
-        averages['num_targets'] = Averager()
-        true_positive_total = 0
-        num_targets_total = 0
-    elif criterion == 'xent':
-        averages['accuracy'] = Averager()
 
     t = time.time()
     optimizer.zero_grad()
+    device = 'cuda'
     for batch_idx, (images, labels) in enumerate(loader):
         images = images.to(device)
         labels = labels.to(device)
 
-        if criterion == 'bce':
-            loss, stats = net.get_bce_loss(images, labels)
-            averages['loss'].add(loss.item())
-            true_positive_total += stats['true_pos']
-            num_targets_total += stats['num_targets']
-            extra_s = 'True Pos Rate: {:.5f} ({} / {}).'.format(
-                100. * true_positive_total / num_targets_total,
-                true_positive_total, num_targets_total
-            )            
-        elif criterion == 'xent':
-            labels = labels.to(device)
-            loss, stats = net.get_xent_loss(images, labels)
-            averages['loss'].add(loss.item())
-            for key, value in stats.items():
-                averages[key].add(value)
-            extra_s = 'Acc: {:.5f}.'.format(
-                averages['accuracy'].item()
-            )
+        loss, stats = get_mnist_loss(net, images, labels)
+        averages['loss'].add(loss.item())
+        for key, value in stats.items():
+            if key not in averages:
+                averages[key] = Averager()
+            averages[key].add(value)
+        extra_s = 'Acc: {:.5f}.'.format(
+            averages['accuracy'].item()
+        )
 
-        # print('MCH bias: ', net.mnist_classifier_head.bias)
-        # print('CL2: ', net.capsule_layers[2].w[0, 0, 0])
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -144,45 +219,28 @@ def train(epoch, net, optimizer, criterion, loader, args, device):
     return train_loss, train_acc
 
 
-def test(epoch, net, criterion, loader, args, device, store_dir=None):
-    print('\n***\nStarted test on epoch %d.\n***\n' % (epoch+1))
-
+def test(epoch, net, loader):
     net.eval()
     averages = {
         'loss': Averager()
     }
-    if criterion == 'bce':
-        averages['true_pos'] = Averager()
-        averages['num_targets'] = Averager()
-        true_positive_total = 0
-        num_targets_total = 0
-    elif criterion == 'xent':
-        averages['accuracy'] = Averager()
 
     t = time.time()
+    device = 'cuda'
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(loader):
             images = images.to(device)
             labels = labels.to(device)
 
-            if criterion == 'bce':
-                loss, stats = net.get_bce_loss(images, labels)
-                averages['loss'].add(loss.item())
-                true_positive_total += stats['true_pos']
-                num_targets_total += stats['num_targets']
-                extra_s = 'True Pos Rate: {:.5f} ({} / {}).'.format(
-                    100. * true_positive_total / num_targets_total,
-                    true_positive_total, num_targets_total
-                )            
-            elif criterion == 'xent':
-                labels = labels.to(device)
-                loss, stats = net.get_xent_loss(images, labels)
-                averages['loss'].add(loss.item())                
-                for key, value in stats.items():
-                    averages[key].add(value)
-                extra_s = 'Acc: {:.5f}.'.format(
-                    averages['accuracy'].item()
-                )
+            loss, stats = get_mnist_loss(net, images, labels)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = 'Acc: {:.5f}.'.format(
+                averages['accuracy'].item()
+            )
 
             if batch_idx % 100 == 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -193,17 +251,6 @@ def test(epoch, net, criterion, loader, args, device, store_dir=None):
 
         test_loss = averages['loss'].item()
         test_acc = averages['accuracy'].item()
-
-    # Save checkpoint.
-    state = {
-        'net': net.state_dict(),
-        'epoch': epoch,
-        'loss': test_loss
-    }
-    if not store_dir:
-        print('Do not have store_dir!')
-    elif not args.debug:
-        torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
 
     return test_loss, test_acc
 
