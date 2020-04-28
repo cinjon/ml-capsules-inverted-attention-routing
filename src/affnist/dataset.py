@@ -2,6 +2,7 @@ from glob import glob
 import os
 import numpy as np
 
+from PIL import Image
 from scipy.io.matlab import loadmat
 from torch.utils.data import Dataset
 
@@ -38,9 +39,11 @@ class AffNist(Dataset):
 
     def __getitem__(self, index):
         img = self.imgs[index]
+        img = Image.fromarray(img)
         lbl = self.lbls[index]
         if self.transform:
             img = self.transform(img)
+        img = img[:, None, :, :]
         return img, lbl
 
     def __len__(self):
