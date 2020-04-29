@@ -42,6 +42,9 @@ from src.resnet_reorder_model import ReorderResNet
 
 def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
              comet_exp=None, center_start=True):
+    # from MulticoreTSNE import MulticoreTSNE as multiTSNE
+
+    # NOTE: Use this when it's the only thing on the GPU.
     from tsnecuda import TSNE as cudaTSNE
 
     if use_moving_mnist:
@@ -117,6 +120,7 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
 
             # orig_images = torch.cat(orig_images, 0)
             # orig_images = orig_images.numpy()
+            torch.cuda.empty_cache()
             model_poses = torch.cat(model_poses, 0)
             model_poses = model_poses.numpy()
             targets = torch.cat(targets, 0)
@@ -127,11 +131,13 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
                     continue
 
                 print('TSNEing the %s %s (%d)...' % (split, key, epoch))
+                # embeddings = multiTSNE(
+                #     n_jobs=4, n_components=2, perplexity=30, learning_rate=100.0
+                # ).fit_transform(x)
                 embeddings = cudaTSNE(
                     n_components=2, perplexity=30, learning_rate=100.0
-                    # perplexity=15, learning_rate=30.0
                 ).fit_transform(x)
-                # embeddings = multiTSNE(n_jobs=4).fit_transform(x)
+
                 vis_x = embeddings[:, 0]
                 vis_y = embeddings[:, 1]
                 plt.scatter(vis_x, vis_y, c=targets, cmap=plt.cm.get_cmap("jet", 10), marker='.')
@@ -537,6 +543,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
+            del images
         elif criterion == 'reorder2':
             loss, stats = net.module.get_reorder_loss2(images, device, args, labels=labels)
             averages['loss'].add(loss.item())
@@ -563,6 +570,9 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         optimizer.zero_grad()
 
         step += len(images)
+        del images
+        torch.cuda.empty_cache()
+
         if batch_idx % 25 == 0 and batch_idx > 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
             print(log_text.format(epoch+1, batch_idx, len(loader),
@@ -693,6 +703,9 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
+
+        del images
+        torch.cuda.empty_cache()
 
         for key, value in stats.items():
             if key not in averages:
@@ -893,15 +906,16 @@ def main(args):
                 args.mnist_weight_decay)
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
-
-        if args.do_tsne_test_every and epoch % args.do_tsne_test_every == 0 and epoch > args.do_tsne_test_after:
-            print('\n***\nStarting MNist Test (%d)\n***' % epoch)
-            linpred_train.run_ssl_model(
-                net, comet_exp, args.mnist_batch_size, args.colored,
-                args.num_workers, config['params'], args.backbone,
-                args.num_routing, num_frames, args.mnist_lr,
-                args.mnist_weight_decay)
-            print('\n***\nEnded MNist Test (%d)\n***' % epoch)
+        if all([
+                args.do_tsne_test_every is not None,
+                epoch % args.do_tsne_test_every == 0,
+                epoch > args.do_tsne_test_after
+        ]):
+            print('\n***\nStarting TSNE (%d)\n***' % epoch)
+            run_tsne(
+                net, store_dir, epoch, use_moving_mnist=True,
+                comet_exp=comet_exp, center_start=args.fix_moving_mnist_center)                
+            print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
         if not args.debug:
             with open(store_file, 'wb') as f:
@@ -1135,7 +1149,6 @@ if __name__ == '__main__':
             setattr(args, key, value)
         print(counter, job, '\n', args, '\n')
 
-    args.fix_moving_mnist_center = True
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
     args.colored = not args.no_colored
