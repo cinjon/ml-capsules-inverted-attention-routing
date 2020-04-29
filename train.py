@@ -54,7 +54,7 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
         test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
                                 colored=False, tiny=False, num_digits=1,
                                 one_data_loop=True, center_start=center_start)
-        suffix = 'movmnist64fix'
+        suffix = 'movmnist64fix%d' % int(center_start)
     elif use_mnist:
         train_set = torchvision.datasets.MNIST(
             '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist', train=True,
@@ -143,9 +143,10 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
                 plt.scatter(vis_x, vis_y, c=targets, cmap=plt.cm.get_cmap("jet", 10), marker='.')
                 plt.colorbar(ticks=range(10))
                 plt.clim(-0.5, 9.5)
-                path_ = os.path.join(path, 'tsne.%s.%s.%s%d.png' % (
+                path_ = os.path.join(path, 'tsne.%s.%s.%s%03d.png' % (
                     suffix, key, split, epoch))
                 plt.savefig(path_)
+                plt.clf()
                 if comet_exp:
                     if split == 'train':
                         with comet_exp.train():
@@ -206,6 +207,37 @@ def get_loaders(args):
                                  center_start=args.fix_moving_mnist_center)
         test_set = MovingMNist2(train=False, seq_len=5, image_size=64,
                                 colored=args.colored, tiny=False,
+                                is_triangle_loss='triangle' in args.criterion,
+                                num_digits=args.num_mnist_digits,
+                                center_start=args.fix_moving_mnist_center)
+        train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                   batch_size=args.batch_size,
+                                                   shuffle=True,
+                                                   num_workers=args.num_workers)
+        test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                                  batch_size=args.batch_size,
+                                                  shuffle=False,
+                                                  num_workers=args.num_workers)
+        affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+        affnist_test_set = AffNist(
+            affnist_root, train=False, subset=False,
+            transform=transforms.Compose([
+                transforms.Pad(12),
+                transforms.ToTensor(),
+            ])
+        )
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=args.batch_size, shuffle=False)
+    elif args.dataset == 'MovingMNist2.img1':
+        train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
+                                 colored=args.colored, tiny=False,
+                                 one_data_loop=True,
+                                 is_triangle_loss='triangle' in args.criterion,
+                                 num_digits=args.num_mnist_digits,
+                                 center_start=args.fix_moving_mnist_center)
+        test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
+                                colored=args.colored, tiny=False,
+                                one_data_loop=True,
                                 is_triangle_loss='triangle' in args.criterion,
                                 num_digits=args.num_mnist_digits,
                                 center_start=args.fix_moving_mnist_center)
@@ -487,7 +519,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         if criterion == 'triplet':
             # NOTE: Zeping.
             images = images.to(device)
-            loss, stats = net.module.get_triplet_loss(images)
+            loss, stats = capsule_time_model.get_triplet_loss(net, images)
             averages['loss'].add(loss.item())
             positive_distance = stats['positive_distance']
             negative_distance = stats['negative_distance']
@@ -499,7 +531,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'bce':
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.module.get_bce_loss(images, labels)
+            loss, stats = capsule_time_model.get_bce_loss(net, images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
             num_targets_total += stats['num_targets']
@@ -509,7 +541,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             )
         elif criterion == 'nce':
             images = images.to(device)
-            loss, stats = net.module.get_nce_loss(images, args)
+            loss, stats = capsule_time_model.get_nce_loss(net, images, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -520,8 +552,12 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             )
         elif criterion == 'xent':
             images = images.to(device)
+            batch_size, num_images = images.shape[:2]
+            # Change view so that we can put everything through the model at once.
+            images = images.view(batch_size * num_images, *images.shape[2:])
+            labels = labels.squeeze()
             labels = labels.to(device)
-            loss, stats = net.module.get_xent_loss(images, labels)
+            loss, stats = capsule_time_model.get_xent_loss(net, images, labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -535,7 +571,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 continue
             images = images.to(device)
             labels = labels.to(device)
-            loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
+            loss, stats = capsule_time_model.get_reorder_loss(net, images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -545,7 +581,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                                  for k, v in averages.items()])
             del images
         elif criterion == 'reorder2':
-            loss, stats = net.module.get_reorder_loss2(images, device, args, labels=labels)
+            loss, stats = capsule_time_model.get_reorder_loss2(net, images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -556,11 +592,21 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
                            'triangle_margin2', 'triangle_margin2_angle']:
             images = images.to(device)
-            loss, stats = net.module.get_triangle_loss(images, device, args)
+            loss, stats = capsule_time_model.get_triangle_loss(net, images, device, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                    averages[key] = Averager()
+                   
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
+        elif criterion in ['triangle_margin2_angle_nce']:
+            images = images.to(device)
+            loss, stats = net.module.get_triangle_nce_loss(images, device, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                   
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
@@ -621,7 +667,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             if criterion == 'triplet':
                 # NOTE: Zeping.
                 images = images.to(device)
-                loss, stats = net.module.get_triplet_loss(images)
+                loss, stats = capsule_time_model.get_triplet_loss(net, images)
                 averages['loss'].add(loss.item())
                 positive_distance = stats['positive_distance']
                 negative_distance = stats['negative_distance']
@@ -633,7 +679,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion == 'bce':
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.module.get_bce_loss(images, labels)
+                loss, stats = capsule_time_model.get_bce_loss(net, images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
                 num_targets_total += stats['num_targets']
@@ -643,7 +689,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 )
             elif criterion == 'nce':
                 images = images.to(device)
-                loss, stats = net.module.get_nce_loss(images, args)
+                loss, stats = capsule_time_model.get_nce_loss(net, images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -654,7 +700,12 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 )
             elif criterion == 'xent':
                 images = images.to(device)
-                loss, stats = net.module.get_xent_loss(images, args)
+                batch_size, num_images = images.shape[:2]
+                # Change view so that we can put everything through the model at once.
+                images = images.view(batch_size * num_images, *images.shape[2:])
+                labels = labels.squeeze()
+                labels = labels.to(device)
+                loss, stats = capsule_time_model.get_xent_loss(net, images, labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -668,7 +719,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                     continue
                 images = images.to(device)
                 labels = labels.to(device)
-                loss, stats = net.module.get_reorder_loss(images, device, args, labels=labels)
+                loss, stats = capsule_time_model.get_reorder_loss(net, images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -677,7 +728,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
             elif criterion == 'reorder2':
-                loss, stats = net.module.get_reorder_loss2(images, device, args)
+                loss, stats = capsule_time_model.get_reorder_loss2(net, images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -688,7 +739,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
             elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
                                'triangle_margin2', 'triangle_margin2_angle']:
                 images = images.to(device)
-                loss, stats = net.module.get_triangle_loss(images, device, args)
+                loss, stats = capsule_time_model.get_triangle_loss(net, images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -726,6 +777,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
 
     test_acc = averages['accuracy'].item() if 'accuracy' in averages else None
     return test_loss, test_acc
+
 
 
 def main(args):
@@ -888,8 +940,8 @@ def main(args):
                 last_saved_epoch = epoch
 
         if 'triangle' not in args.criterion and \
-           args.dataset in ['affnist', 'MovingMNist2'] and test_acc >= .9875 \
-           and train_acc >= .9875 and epoch > 0:
+           args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
+           test_acc >= .9875 and train_acc >= .9875 and epoch > 0:           
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)

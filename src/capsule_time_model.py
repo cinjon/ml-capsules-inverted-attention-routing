@@ -236,352 +236,428 @@ class CapsTimeModel(nn.Module):
             # return pose, presence, object_
             return pose
 
-    def get_bce_loss(self, images, labels):
-        images = images[:, 0, :, :, :]
-        output = self(images, return_embedding=False)
-        loss = nn.BCEWithLogitsLoss()(output, labels)
-        predicted = (torch.sigmoid(output) > 0.5).type(output.dtype)
-        num_total = labels.size(0)
-        num_targets = labels.eq(1).sum().item()
-        correct = predicted.eq(labels).all(1).sum().item()
-        true_positive_count = (predicted.eq(labels) & labels.eq(1)).sum().item()
-        stats = {
-            'true_pos': true_positive_count,
-            'num_targets': num_targets
-        }
-        return loss, stats
 
-    def get_xent_loss(self, images, labels):
-        output = self(images, return_embedding=False)
-        loss = F.cross_entropy(output, labels)
-        predictions = torch.argmax(output, dim=1)
-        accuracy = (predictions == labels).float().mean().item()
-        stats = {
-            'accuracy': accuracy,
-        }
-        return loss, stats
+def get_bce_loss(model, images, labels):
+    images = images[:, 0, :, :, :]
+    output = model(images, return_embedding=False)
+    loss = nn.BCEWithLogitsLoss()(output, labels)
+    predicted = (torch.sigmoid(output) > 0.5).type(output.dtype)
+    num_total = labels.size(0)
+    num_targets = labels.eq(1).sum().item()
+    correct = predicted.eq(labels).all(1).sum().item()
+    true_positive_count = (predicted.eq(labels) & labels.eq(1)).sum().item()
+    stats = {
+        'true_pos': true_positive_count,
+        'num_targets': num_targets
+    }
+    return loss, stats
 
-    def get_triplet_loss(self, images, args):
-        inputs_v = self(inputs, return_embedding=True, flatten=False)
-        positive_v = self(positive, return_embedding=True, flatten=False)
-        # TODO: if batch size is odd num then it won't work
-        negative_v = positive_v.flip(0)
 
-        # Compute distance
-        with torch.no_grad():
-            positive_distance = float(torch.dist(inputs_v, positive_v, 2).item())
-            negative_distance = float(torch.dist(inputs_v, negative_v, 2).item())
+def get_triplet_loss(model, images):
+    inputs_v = model(inputs, return_embedding=True, flatten=False)
+    positive_v = model(positive, return_embedding=True, flatten=False)
+    # TODO: if batch size is odd num then it won't work
+    negative_v = positive_v.flip(0)
 
-        stats = {'positive_distance': positive_distance,
-                 'negative_distance': negative_distance}
+    # Compute distance
+    with torch.no_grad():
+        positive_distance = float(torch.dist(inputs_v, positive_v, 2).item())
+        negative_distance = float(torch.dist(inputs_v, negative_v, 2).item())
+    
+    stats = {'positive_distance': positive_distance,
+             'negative_distance': negative_distance}
+    
+    return loss, stats
 
-        return loss, stats
 
-    def get_nce_loss(self, images, args):
-        positive_frame_num = args.nce_positive_frame_num
-        use_random_anchor_frame = args.use_random_anchor_frame
+def get_nce_loss(model, images, args):
+    positive_frame_num = args.nce_positive_frame_num
+    use_random_anchor_frame = args.use_random_anchor_frame
+    
+    if use_random_anchor_frame:
+        # NOTE: not implemented.
+        raise
+    else:
+        anchor_frame = 0
 
-        if use_random_anchor_frame:
-            # NOTE: not implemented.
-            raise
-        else:
-            anchor_frame = 0
+    anchor = images[:, anchor_frame]
+    anchor = model(anchor, return_embedding=True, flatten=False)
+    other = images[:, anchor_frame + positive_frame_num]
+    other = model(other, return_embedding=True, flatten=False)
 
-        anchor = images[:, anchor_frame]
-        anchor = self(anchor, return_embedding=True, flatten=False)
-        other = images[:, anchor_frame + positive_frame_num]
-        other = self(other, return_embedding=True, flatten=False)
+    # Anchor / Positive should now be [bs, num_capsules, num_dims].
+    # We get the similarity of these via
+    # sim(X, Y) = temp * anchor * other / (||anchor|| * ||other||)
+    # ... Do we want this to happen over capsules or over flattened?
+    # I think it should happen over capsules. So the rescaling would occur
+    # over each capsule's dims rather than all of it in total.
+    batch_size = anchor.size(0)
+    anchor_normalized = anchor / anchor.norm(dim=2, keepdim=True)
+    anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+    other_normalized = other / other.norm(dim=2, keepdim=True)
+    other_normalized = other_normalized.view(1, batch_size, -1)
+    
+    # similarity will be [bs, bs, num_capsules * num_dims] after this.
+    similarity = anchor_normalized * other_normalized
+    # now multiply by the temperature.
+    similarity *= args.nce_temperature
+    # and then sum to get the dot product (cosign similarity).
+    # this is [bs, bs]. the positive samples are on the diagonal.
+    similarity = similarity.sum(2)
+    
+    # the diagonal has the positive similarity = log(exp(sim(x, y)))
+    identity = torch.eye(batch_size).to(similarity.device)
+    positive_similarity = (similarity * identity).sum(1)
+    
+    # we get the total similarity by taking the logsumexp of similarity.
+    log_sum_total = torch.logsumexp(similarity, dim=1)
+    
+    diff = positive_similarity - log_sum_total
+    nce = -diff.mean()
+    
+    total_similarity = similarity.sum(1)
+    negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+    positive_similarity = positive_similarity.mean().item()
+    stats = {
+        'pos_sim': positive_similarity,
+        'neg_sim': negative_similarity
+    }
+    return nce, stats
 
-        # Anchor / Positive should now be [bs, num_capsules, num_dims].
-        # We get the similarity of these via
-        # sim(X, Y) = temp * anchor * other / (||anchor|| * ||other||)
-        # ... Do we want this to happen over capsules or over flattened?
-        # I think it should happen over capsules. So the rescaling would occur
-        # over each capsule's dims rather than all of it in total.
-        batch_size = anchor.size(0)
-        anchor_normalized = anchor / anchor.norm(dim=2, keepdim=True)
-        anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
-        other_normalized = other / other.norm(dim=2, keepdim=True)
-        other_normalized = other_normalized.view(1, batch_size, -1)
 
-        # similarity will be [bs, bs, num_capsules * num_dims] after this.
-        similarity = anchor_normalized * other_normalized
-        # now multiply by the temperature.
-        similarity *= args.nce_temperature
-        # and then sum to get the dot product (cosign similarity).
-        # this is [bs, bs]. the positive samples are on the diagonal.
-        similarity = similarity.sum(2)
+def get_xent_loss(model, images, labels):
+    output = model(images, return_embedding=False)
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
+    return loss, stats
 
-        # the diagonal has the positive similarity = log(exp(sim(x, y)))
-        identity = torch.eye(batch_size).to(similarity.device)
-        positive_similarity = (similarity * identity).sum(1)
 
-        # we get the total similarity by taking the logsumexp of similarity.
-        log_sum_total = torch.logsumexp(similarity, dim=1)
+def get_reorder_loss(model, images, device, args, labels=None):
+    # print('now shape: ', images_shape)
+    # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
+    # for i in range(3):
+    #     arr = images[0][i].numpy()
+    #     arr = (255 * arr).astype(np.uint8)
+    #     print(arr.shape, arr.dtype)
+    #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+    #     img.save(path % (int(use_positive), i))
+    
+    batch_size, num_images = images.shape[:2]
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose = model(images)
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    
+    # presence = presence.view(batch_size, num_images, *presence.shape[1:])
+    # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
+    # We now want object_presence to be equal across frames and
+    # object_pose_presence to be indicative of the ordering.
+    # The objects_ right now are Concatenate the objects so that we can compare them.
+    # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
+    # object_presence = object_ * presence
+    # object_pose_presence = object_presence * pose
+    
+    # Get that the image representations should be the same.
+    # object_presence = object_presence.view(batch_size, num_images, -1)
+    # Going with cosine similarity here.
+    # transposed_object_presence = object_presence.permute(0, 2, 1)
+    # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
+    # rolled_object_presence = torch.cat(
+    #     (transposed_object_presence[:, :, -1:],
+    #      transposed_object_presence[:, :, :-1]),
+    #     dim=2
+    # )
+    
+    # cosine_sim = F.cosine_similarity(
+    #     transposed_object_presence, rolled_object_presence, dim=1)
+    
+    # Get the ordering.
+    # flattened = object_pose_presence.view(batch_size, -1)
+    flattened = pose.view(batch_size, -1)
 
-        diff = positive_similarity - log_sum_total
-        nce = -diff.mean()
+    # TODO: Change this in order to get it working with DDP
+    ordering = model.ordering_head(flattened).squeeze(-1)
+    
+    # loss_objects = -cosine_sim.sum(1)
+    # loss_sparsity = presence.sum((1, 2))
+    # loss_objects = loss_objects.mean()
+    # loss_sparsity = loss_sparsity.mean()
+    loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
+    predictions = torch.sigmoid(ordering) > 0.5
+    accuracy = (predictions == labels).float().mean().item()
+    
+    total_loss = sum([
+        args.lambda_ordering * loss_ordering,
+        # args.lambda_object_sim * loss_objects
+    ])
+    
+    stats = {
+        'accuracy': accuracy,
+        # 'objects_sim_loss': loss_objects.item(),
+        # 'presence_sparsity_loss': loss_sparsity.item(),
+        'ordering_loss': loss_ordering.item()
+    }
+    return total_loss, stats
 
-        total_similarity = similarity.sum(1)
-        negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
-        positive_similarity = positive_similarity.mean().item()
-        stats = {
-            'pos_sim': positive_similarity,
-            'neg_sim': negative_similarity
-        }
-        return nce, stats
 
-    def get_reorder_loss(self, images, device, args, labels=None):
-        # print('now shape: ', images_shape)
-        # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
-        # for i in range(3):
-        #     arr = images[0][i].numpy()
-        #     arr = (255 * arr).astype(np.uint8)
-        #     print(arr.shape, arr.dtype)
-        #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #     img.save(path % (int(use_positive), i))
-
-        batch_size, num_images = images.shape[:2]
-        # Change view so that we can put everything through the model at once.
-        images = images.view(batch_size * num_images, *images.shape[2:])
-        pose = self(images)
-        pose = pose.view(batch_size, num_images, *pose.shape[1:])
-
-        # presence = presence.view(batch_size, num_images, *presence.shape[1:])
-        # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
-        # We now want object_presence to be equal across frames and
-        # object_pose_presence to be indicative of the ordering.
-        # The objects_ right now are Concatenate the objects so that we can compare them.
-        # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
-        # object_presence = object_ * presence
-        # object_pose_presence = object_presence * pose
-
-        # Get that the image representations should be the same.
-        # object_presence = object_presence.view(batch_size, num_images, -1)
-        # Going with cosine similarity here.
-        # transposed_object_presence = object_presence.permute(0, 2, 1)
-        # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
-        # rolled_object_presence = torch.cat(
-        #     (transposed_object_presence[:, :, -1:],
-        #      transposed_object_presence[:, :, :-1]),
-        #     dim=2
-        # )
-
-        # cosine_sim = F.cosine_similarity(
-        #     transposed_object_presence, rolled_object_presence, dim=1)
-
-        # Get the ordering.
-        # flattened = object_pose_presence.view(batch_size, -1)
-        flattened = pose.view(batch_size, -1)
-        ordering = self.ordering_head(flattened).squeeze(-1)
-
-        # loss_objects = -cosine_sim.sum(1)
-        # loss_sparsity = presence.sum((1, 2))
-        # loss_objects = loss_objects.mean()
-        # loss_sparsity = loss_sparsity.mean()
-        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
-        predictions = torch.sigmoid(ordering) > 0.5
-        accuracy = (predictions == labels).float().mean().item()
-
-        total_loss = sum([
-            args.lambda_ordering * loss_ordering,
-            # args.lambda_object_sim * loss_objects
-        ])
-
-        stats = {
-            'accuracy': accuracy,
-            # 'objects_sim_loss': loss_objects.item(),
-            # 'presence_sparsity_loss': loss_sparsity.item(),
-            'ordering_loss': loss_ordering.item()
-        }
-        return total_loss, stats
-
-    def get_reorder_loss2(self, images, device, args, labels=None):
-        """
-        Difference between this and the above is that this uses 4 frames in the
-        sequence, not 3. But also it's made much easier.
-        """
-        # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
-        # this three frames to use as either positive or negative.
-
-        # select frames (a, b, c, d, e)
-        range_size = int(images.shape[1] / 5)
-        sample = [random.choice(range(i*range_size, (i+1)*range_size))
-                  for i in range(5)]
-
-        # Maybe flip the list's order.
+def get_reorder_loss2(model, images, device, args, labels=None):
+    """
+    Difference between this and the above is that this uses 4 frames in the
+    sequence, not 3. But also it's made much easier.
+    """
+    # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
+    # this three frames to use as either positive or negative.
+    
+    # select frames (a, b, c, d, e)
+    range_size = int(images.shape[1] / 5)
+    sample = [random.choice(range(i*range_size, (i+1)*range_size))
+              for i in range(5)]
+    
+    # Maybe flip the list's order.
+    if random.random() > 0.5:
+        sample = list(reversed(sample))
+        
+    use_positive = random.random() > 0.5
+    if use_positive:
+        # frames (b, c, d, e), (a, b, c, d), (e, d, c, b), or (d, c, b, a).
         if random.random() > 0.5:
-            sample = list(reversed(sample))
-
-        use_positive = random.random() > 0.5
-        if use_positive:
-            # frames (b, c, d, e), (a, b, c, d), (e, d, c, b), or (d, c, b, a).
-            if random.random() > 0.5:
-                selection = sample[:4]
-            else:
-                selection = sample[1:]
+            selection = sample[:4]
         else:
-            # (a, b, c, d, e)
-            # (b, c, a, d), (a, c, d, b), (b, d, e, c),
-            # (c, a, b, d), (a, d, b, c), (b, e, c, d)
-            if random.random() > .84:
-                selection = [sample[1], sample[2], sample[0], sample[3]]
-            elif random.random() > .68:
-                selection = [sample[0], sample[2], sample[3], sample[1]]
-            elif random.random() > .52:
-                selection = [sample[1], sample[3], sample[4], sample[2]]
-            elif random.random() > .36:
-                selection = [sample[2], sample[0], sample[1], sample[3]]
-            elif random.random() > .20:
-                selection = [sample[0], sample[3], sample[1], sample[2]]
-            else:
-                selection = [sample[1], sample[4], sample[2], sample[3]]
-
-        images = images[:, selection]
-
-        # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
-        # for batch_num in range(len(images)):
-        #     image = images[batch_num].numpy()
-        #     label_ = labels[batch_num].numpy()
-        #     for num in range(len(image)):
-        #         arr = image[num]
-        #         arr = (255 * arr).astype(np.uint8)
-        #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #         img.save(path % (label_, num, int(use_positive)))
-
-        images_shape = images.shape
-        # print('now shape: ', images_shape)
-        # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
-        # for i in range(3):
-        #     arr = images[0][i].numpy()
-        #     arr = (255 * arr).astype(np.uint8)
-        #     print(arr.shape, arr.dtype)
-        #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
-        #     img.save(path % (int(use_positive), i))
-
-        batch_size, num_images = images.shape[:2]
-        images = images.to(device)
-        labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
-
-        # Change view so that we can put everything through the model at once.
-        images = images.view(batch_size * num_images, *images.shape[2:])
-        pose = self(images)
-        pose = pose.view(batch_size, num_images, *pose.shape[1:])
-
-        # presence = presence.view(batch_size, num_images, *presence.shape[1:])
-        # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
-        # We now want object_presence to be equal across frames and
-        # object_pose_presence to be indicative of the ordering.
-        # The objects_ right now are Concatenate the objects so that we can compare them.
-        # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
-        # object_presence = object_ * presence
-        # object_pose_presence = object_presence * pose
-
-        # Get that the image representations should be the same.
-        # object_presence = object_presence.view(batch_size, num_images, -1)
-        # Going with cosine similarity here.
-        # transposed_object_presence = object_presence.permute(0, 2, 1)
-        # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
-        # rolled_object_presence = torch.cat(
-        #     (transposed_object_presence[:, :, -1:],
-        #      transposed_object_presence[:, :, :-1]),
-        #     dim=2
-        # )
-
-        # cosine_sim = F.cosine_similarity(
-        #     transposed_object_presence, rolled_object_presence, dim=1)
-
-        # Get the ordering.
-        # flattened = object_pose_presence.view(batch_size, -1)
-        flattened = pose.view(batch_size, -1)
-        ordering = self.ordering_head(flattened).squeeze(-1)
-
-        # loss_objects = -cosine_sim.sum(1)
-        # loss_sparsity = presence.sum((1, 2))
-        # loss_objects = loss_objects.mean()
-        # loss_sparsity = loss_sparsity.mean()
-        loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
-        predictions = torch.sigmoid(ordering) > 0.5
-        accuracy = (predictions == labels).float().mean().item()
-
-        total_loss = sum([
-            args.lambda_ordering * loss_ordering,
-            # args.lambda_object_sim * loss_objects
-        ])
-
-        stats = {
-            'accuracy': accuracy,
-            # 'objects_sim_loss': loss_objects.item(),
-            # 'presence_sparsity_loss': loss_sparsity.item(),
-            'ordering_loss': loss_ordering.item()
-        }
-        return total_loss, stats
-
-    def get_triangle_loss(self, images, device, args):
-        batch_size, num_images = images.shape[:2]
-
-        # Change view so that we can put everything through the model at once.
-        images = images.view(batch_size * num_images, *images.shape[2:])
-        pose = self(images)
-        # With 2channel, this is torch.Size([12, 3, 2, 36]).
-        # With 1channel, it is torch.Size([12, 5, 2, 36])
-        # NOTE: This is ... [bs, ni, 2] when doing the 1channel... is that right?
-        pose = pose.view(batch_size, num_images, *pose.shape[1:])
-
-        sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
-        sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
-        sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
-
-        segment_13 = pose[:, 2, :] - pose[:, 0, :]
-        segment_12 = pose[:, 1, :] - pose[:, 0, :]
-        cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
-
-        if args.criterion == 'triangle_margin2_angle':
-            # Here, we optimize the angle between them. We will pair it down
-            # below with the margin_loss_12 + margin_loss_23.
-            loss = -cosine_sim_13_12
+            selection = sample[1:]
+    else:
+        # (a, b, c, d, e)
+        # (b, c, a, d), (a, c, d, b), (b, d, e, c),
+        # (c, a, b, d), (a, d, b, c), (b, e, c, d)
+        if random.random() > .84:
+            selection = [sample[1], sample[2], sample[0], sample[3]]
+        elif random.random() > .68:
+            selection = [sample[0], sample[2], sample[3], sample[1]]
+        elif random.random() > .52:
+            selection = [sample[1], sample[3], sample[4], sample[2]]
+        elif random.random() > .36:
+            selection = [sample[2], sample[0], sample[1], sample[3]]
+        elif random.random() > .20:
+            selection = [sample[0], sample[3], sample[1], sample[2]]
         else:
-            # Here, we optimize the triangle expression. This going to zero
-            # should surrogate optimize the angle above.
-            loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+            selection = [sample[1], sample[4], sample[2], sample[3]]
+            
+    images = images[:, selection]
+    
+    # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
+    # for batch_num in range(len(images)):
+    #     image = images[batch_num].numpy()
+    #     label_ = labels[batch_num].numpy()
+    #     for num in range(len(image)):
+    #         arr = image[num]
+    #         arr = (255 * arr).astype(np.uint8)
+    #         img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+    #         img.save(path % (label_, num, int(use_positive)))
 
-        stats = {
-            'frame_12_sim': sim_12.item(),
-            'frame_23_sim': sim_23.item(),
-            'frame_13_sim': sim_13.item(),
-            'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
-            'cosine_sim_13_12': cosine_sim_13_12.item()
-        }
+    images_shape = images.shape
+    # print('now shape: ', images_shape)
+    # path = '/misc/kcgscratch1/ChoGroup/resnick/up%d.vid%d.png'
+    # for i in range(3):
+    #     arr = images[0][i].numpy()
+    #     arr = (255 * arr).astype(np.uint8)
+    #     print(arr.shape, arr.dtype)
+    #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
+    #     img.save(path % (int(use_positive), i))
+    
+    batch_size, num_images = images.shape[:2]
+    images = images.to(device)
+    labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
+    
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose = model(images)
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    
+    # presence = presence.view(batch_size, num_images, *presence.shape[1:])
+    # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
+    # We now want object_presence to be equal across frames and
+    # object_pose_presence to be indicative of the ordering.
+    # The objects_ right now are Concatenate the objects so that we can compare them.
+    # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
+    # object_presence = object_ * presence
+    # object_pose_presence = object_presence * pose
+    
+    # Get that the image representations should be the same.
+    # object_presence = object_presence.view(batch_size, num_images, -1)
+    # Going with cosine similarity here.
+    # transposed_object_presence = object_presence.permute(0, 2, 1)
+    # rolled_object_presence[:, :, 0] = transposed_object_presence[:, :, -1]
+    # rolled_object_presence = torch.cat(
+    #     (transposed_object_presence[:, :, -1:],
+    #      transposed_object_presence[:, :, :-1]),
+    #     dim=2
+    # )
+    
+    # cosine_sim = F.cosine_similarity(
+    #     transposed_object_presence, rolled_object_presence, dim=1)
+    
+    # Get the ordering.
+    # flattened = object_pose_presence.view(batch_size, -1)
+    flattened = pose.view(batch_size, -1)
+    ordering = model.ordering_head(flattened).squeeze(-1)
+    
+    # loss_objects = -cosine_sim.sum(1)
+    # loss_sparsity = presence.sum((1, 2))
+    # loss_objects = loss_objects.mean()
+    # loss_sparsity = loss_sparsity.mean()
+    loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
+    predictions = torch.sigmoid(ordering) > 0.5
+    accuracy = (predictions == labels).float().mean().item()
+    
+    total_loss = sum([
+        args.lambda_ordering * loss_ordering,
+        # args.lambda_object_sim * loss_objects
+    ])
+    
+    stats = {
+        'accuracy': accuracy,
+        # 'objects_sim_loss': loss_objects.item(),
+        # 'presence_sparsity_loss': loss_sparsity.item(),
+        'ordering_loss': loss_ordering.item()
+    }
+    return total_loss, stats
 
-        if args.criterion == 'triangle_cos':
-            # We want to minimize cosine similarity. Maximizing it would mean
-            # that the angle between them was theta.
-            cos_sim_13 = F.cosine_similarity(pose[:, 0, :], pose[:, 2, :]).mean()
-            stats['frame_13_cossim'] = cos_sim_13.item()
-            loss += args.triangle_cos_lambda * cos_sim_13
-        elif args.criterion == 'triangle_margin':
-            # We want to try to get the distance between pose of frames 1 and 3
-            # to be at least the margin size.
-            margin_loss = torch.norm(segment_13, dim=1)
-            margin_loss = args.margin_gamma - margin_loss
-            margin_loss = F.relu(margin_loss).sum()
-            loss += margin_loss * args.triangle_margin_lambda
-            stats['margin_loss'] = margin_loss.item()
-        elif args.criterion in ['triangle_margin2', 'triangle_margin2_angle']:
-            # Here we put the margin_loss on segmnet_12 and semgnet_23 instead.
-            segment_23 = pose[:, 2, :] - pose[:, 1, :]
-            margin_loss_23 = torch.norm(segment_23, dim=1)
-            margin_loss_23 = args.margin_gamma2 - margin_loss_23
-            margin_loss_23 = F.relu(margin_loss_23).sum()
-            loss += margin_loss_23 * args.triangle_margin_lambda
 
-            margin_loss_12 = torch.norm(segment_12, dim=1)
-            margin_loss_12 = args.margin_gamma2 - margin_loss_12
-            margin_loss_12 = F.relu(margin_loss_12).sum()
-            loss += margin_loss_12 * args.triangle_margin_lambda
+def get_triangle_loss(self, images, device, args):
+    batch_size, num_images = images.shape[:2]
 
-            stats['margin_loss_23'] = margin_loss_23.item()
-            stats['margin_loss_12'] = margin_loss_12.item()
-            stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose = self(images)
+    # With 2channel, this is torch.Size([12, 3, 2, 36]).
+    # With 1channel, it is torch.Size([12, 5, 2, 36])
+    # NOTE: This is ... [bs, ni, 2] when doing the 1channel... is that right?
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    
+    sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+    
+    segment_13 = pose[:, 2, :] - pose[:, 0, :]
+    segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+    
+    if args.criterion == 'triangle_margin2_angle':
+        # Here, we optimize the angle between them. We will pair it down
+        # below with the margin_loss_12 + margin_loss_23.
+        loss = -cosine_sim_13_12
+    else:
+        # Here, we optimize the triangle expression. This going to zero
+        # should surrogate optimize the angle above.
+        loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+        
+    stats = {
+        'frame_12_sim': sim_12.item(),
+        'frame_23_sim': sim_23.item(),
+        'frame_13_sim': sim_13.item(),
+        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+        'cosine_sim_13_12': cosine_sim_13_12.item()
+    }
+    
+    if args.criterion == 'triangle_cos':
+        # We want to minimize cosine similarity. Maximizing it would mean
+        # that the angle between them was theta.
+        cos_sim_13 = F.cosine_similarity(pose[:, 0, :], pose[:, 2, :]).mean()
+        stats['frame_13_cossim'] = cos_sim_13.item()
+        loss += args.triangle_cos_lambda * cos_sim_13
+    elif args.criterion == 'triangle_margin':
+        # We want to try to get the distance between pose of frames 1 and 3
+        # to be at least the margin size.
+        margin_loss = torch.norm(segment_13, dim=1)
+        margin_loss = args.margin_gamma - margin_loss
+        margin_loss = F.relu(margin_loss).sum()
+        loss += margin_loss * args.triangle_margin_lambda
+        stats['margin_loss'] = margin_loss.item()
+    elif args.criterion in ['triangle_margin2', 'triangle_margin2_angle']:
+        # Here we put the margin_loss on segmnet_12 and semgnet_23 instead.
+        segment_23 = pose[:, 2, :] - pose[:, 1, :]
+        margin_loss_23 = torch.norm(segment_23, dim=1)
+        margin_loss_23 = args.margin_gamma2 - margin_loss_23
+        margin_loss_23 = F.relu(margin_loss_23).sum()
+        loss += margin_loss_23 * args.triangle_margin_lambda
+        
+        margin_loss_12 = torch.norm(segment_12, dim=1)
+        margin_loss_12 = args.margin_gamma2 - margin_loss_12
+        margin_loss_12 = F.relu(margin_loss_12).sum()
+        loss += margin_loss_12 * args.triangle_margin_lambda
+        
+        stats['margin_loss_23'] = margin_loss_23.item()
+        stats['margin_loss_12'] = margin_loss_12.item()
+        stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+        
+    return loss, stats
 
-        return loss, stats
+
+def get_triangle_nce_loss(self, images, device, args):
+    batch_size, num_images = images.shape[:2]
+
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose = self(images)
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    
+    sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+    
+    segment_13 = pose[:, 2, :] - pose[:, 0, :]
+    segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+    
+    if args.criterion == 'triangle_margin2_angle':
+        # Here, we optimize the angle between them. We will pair it down
+        # below with the margin_loss_12 + margin_loss_23.
+        loss = -cosine_sim_13_12
+    else:
+        # Here, we optimize the triangle expression. This going to zero
+        # should surrogate optimize the angle above.
+        loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+        
+    stats = {
+        'frame_12_sim': sim_12.item(),
+        'frame_23_sim': sim_23.item(),
+        'frame_13_sim': sim_13.item(),
+        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+        'cosine_sim_13_12': cosine_sim_13_12.item()
+    }
+    
+    if args.criterion == 'triangle_cos':
+        # We want to minimize cosine similarity. Maximizing it would mean
+        # that the angle between them was theta.
+        cos_sim_13 = F.cosine_similarity(pose[:, 0, :], pose[:, 2, :]).mean()
+        stats['frame_13_cossim'] = cos_sim_13.item()
+        loss += args.triangle_cos_lambda * cos_sim_13
+    elif args.criterion == 'triangle_margin':
+        # We want to try to get the distance between pose of frames 1 and 3
+        # to be at least the margin size.
+        margin_loss = torch.norm(segment_13, dim=1)
+        margin_loss = args.margin_gamma - margin_loss
+        margin_loss = F.relu(margin_loss).sum()
+        loss += margin_loss * args.triangle_margin_lambda
+        stats['margin_loss'] = margin_loss.item()
+    elif args.criterion in ['triangle_margin2', 'triangle_margin2_angle']:
+        # Here we put the margin_loss on segmnet_12 and semgnet_23 instead.
+        segment_23 = pose[:, 2, :] - pose[:, 1, :]
+        margin_loss_23 = torch.norm(segment_23, dim=1)
+        margin_loss_23 = args.margin_gamma2 - margin_loss_23
+        margin_loss_23 = F.relu(margin_loss_23).sum()
+        loss += margin_loss_23 * args.triangle_margin_lambda
+        
+        margin_loss_12 = torch.norm(segment_12, dim=1)
+        margin_loss_12 = args.margin_gamma2 - margin_loss_12
+        margin_loss_12 = F.relu(margin_loss_12).sum()
+        loss += margin_loss_12 * args.triangle_margin_lambda
+        
+        stats['margin_loss_23'] = margin_loss_23.item()
+        stats['margin_loss_12'] = margin_loss_12.item()
+        stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+        
+    return loss, stats
