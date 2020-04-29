@@ -12,16 +12,21 @@ from torchvision.datasets.utils import download_url, makedir_exist_ok
 class MovingMNIST(data.Dataset):
     def __init__(self, train=True, seq_len=20, skip=1,
                  image_size=64, colored=True, tiny=False,
-                 is_triangle_loss=False, num_digits=2):                 
+                 is_triangle_loss=False, num_digits=2,
+                 one_data_loop=False, center_start=False): 
         self.is_triangle_loss = is_triangle_loss
 
+        data, labels = self.load_dataset(train)
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
         self.data_handler = handler(
-            seq_len, skip, image_size, is_triangle_loss=is_triangle_loss,
-            num_digits=num_digits, train=train)
-            
-        if tiny:
+            data, labels, seq_len, skip, image_size,
+            is_triangle_loss=is_triangle_loss, num_digits=num_digits,
+            train=train, center_start=center_start)
+
+        if one_data_loop:
+            self.data_size = len(data)
+        elif tiny:
             self.data_size = 64 * pow(2, 2)
         elif train:
             # self.data_size = 64 * pow(2, 12)
@@ -29,44 +34,6 @@ class MovingMNIST(data.Dataset):
             self.data_size = 64 * pow(2, 8)
         else:
             self.data_size = 64 * pow(2, 5)
-
-    def __getitem__(self, index):
-        datum, label = self.data_handler.get_item()
-        datum = torch.from_numpy(datum)
-        label = torch.from_numpy(np.array(label))
-        return datum, label
-
-    def __len__(self):
-        return self.data_size
-
-
-class _BouncingMNISTDataHandler(object):
-    """Data Handler that creates Bouncing MNIST dataset on the fly."""
-
-    def __init__(self, seq_length = 20, skip=1, output_image_size=64,
-                 is_triangle_loss=False, num_digits=2, train=True):
-        self.seq_length_ = seq_length
-        self.skip = skip
-        self.image_size_ = 64
-        self.output_image_size = output_image_size
-        self.num_digits_ = num_digits
-        self.step_length_ = 0.035 # NOTE: was 0.1
-
-        self.digit_size_ = 28
-        self.frame_size_ = self.image_size_ ** 2
-
-        data, labels = self.load_dataset(train)
-        self.data_ = data
-        self.labels_ = labels
-
-        # with h5py.File('/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/mnist.h5', 'r') as f:
-        #     key = 'train' if train else 'test'
-        #     self.data_ = f[key][()].reshape(-1, 28, 28)
-
-        self.indices_ = np.arange(self.data_.shape[0])
-        self.row_ = 0
-        self.is_triangle_loss = is_triangle_loss
-        np.random.shuffle(self.indices_)
 
     def load_dataset(self, train):
         img_filename = "train-images-idx3-ubyte.gz" if train\
@@ -101,6 +68,43 @@ class _BouncingMNISTDataHandler(object):
                          root=root)
         return filepath
 
+    def __getitem__(self, index):
+        datum, label = self.data_handler.get_item()
+        datum = torch.from_numpy(datum)
+        label = torch.from_numpy(np.array(label))
+        return datum, label
+
+    def __len__(self):
+        return self.data_size
+
+
+class _BouncingMNISTDataHandler(object):
+    """Data Handler that creates Bouncing MNIST dataset on the fly."""
+
+    def __init__(self, data, labels, seq_length = 20, skip=1,
+                 output_image_size=64, is_triangle_loss=False, num_digits=2,
+                 train=False, center_start=False):
+        self.seq_length_ = seq_length
+        self.skip = skip
+        self.image_size_ = 64
+        self.output_image_size = output_image_size
+        self.num_digits_ = num_digits
+        self.step_length_ = 0.035 # NOTE: was 0.1
+
+        self.digit_size_ = 28
+        self.frame_size_ = self.image_size_ ** 2
+
+        self.data_ = data
+        self.labels_ = labels
+
+        self.indices_ = np.arange(self.data_.shape[0])
+        self.row_ = 0
+        self.is_triangle_loss = is_triangle_loss
+        self.train = train
+        self.center_start = center_start
+        if train:
+            np.random.shuffle(self.indices_)
+
     def get_dims(self):
         return self.frame_size_
 
@@ -112,9 +116,14 @@ class _BouncingMNISTDataHandler(object):
         skip = self.skip
         canvas_size = self.image_size_ - self.digit_size_
 
-        # Initial position uniform random inside the box.
-        y = np.random.rand(num_digits)
-        x = np.random.rand(num_digits)
+        if self.center_start:
+            # NOTE: Trying deterministic here
+            x = [0.5] * num_digits
+            y = [0.5] * num_digits
+        else:
+            # Initial position uniform random inside the box.
+            y = np.random.rand(num_digits)
+            x = np.random.rand(num_digits)
 
         # Choose a random velocity.
         theta = np.random.rand(num_digits) * 2 * np.pi
@@ -186,7 +195,8 @@ class _BouncingMNISTDataHandler(object):
             self.row_ += 1
             if self.row_ == self.data_.shape[0]:
                 self.row_ = 0
-                np.random.shuffle(self.indices_)
+                if self.train:
+                    np.random.shuffle(self.indices_)
             digit_image = self.data_[ind, :, :]
             label.append(self.labels_[ind])
 
@@ -242,7 +252,8 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
             self.row_ += 1
             if self.row_ == self.data_.shape[0]:
                 self.row_ = 0
-                np.random.shuffle(self.indices_)
+                if self.train:
+                    np.random.shuffle(self.indices_)
             digit_image = self.data_[ind, :, :]
             label.append(self.labels_[ind])
 
