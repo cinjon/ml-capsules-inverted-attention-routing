@@ -14,6 +14,8 @@ import numpy as np
 from datetime import datetime
 
 from comet_ml import Experiment as CometExperiment, OfflineExperiment
+from matplotlib import pyplot as plt
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -36,6 +38,124 @@ from src.gymnastics import GymnasticsRgbFrame
 from src.gymnastics.gymnastics_flow import GymnasticsFlow, GymnasticsFlowExperiment, gymnastics_flow_collate
 import video_transforms
 from src.resnet_reorder_model import ReorderResNet
+
+
+def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
+             comet_exp=None):
+    from tsnecuda import TSNE as cudaTSNE
+    from MulticoreTSNE import MulticoreTSNE as multiTSNE
+
+    if use_moving_mnist:
+        train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
+                                 colored=False, tiny=False, num_digits=1,
+                                 one_data_loop=True)
+        test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
+                                colored=False, tiny=False, num_digits=1,
+                                one_data_loop=True)
+        suffix = 'movmnist64fix'
+    elif use_mnist:
+        train_set = torchvision.datasets.MNIST(
+            '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist', train=True,
+            download=True,
+            transform=transforms.Compose([
+                # transforms.Resize(64),
+                transforms.ToTensor(),
+                # transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+        test_set = torchvision.datasets.MNIST(
+            '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist', train=False,
+            transform=transforms.Compose([
+                transforms.Pad(18),
+                transforms.RandomAffine(0, (.02, .02)),
+                transforms.ToTensor(),
+                # transforms.Normalize((0.1307,), (0.3081,))
+            ])
+        )
+        suffix = 'mnistpad18translateRand1'
+
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=72,
+                                               shuffle=False,
+                                               num_workers=2)
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=72,
+                                              shuffle=False,
+                                              num_workers=2)
+
+    orig_images = []
+    model_poses = []
+    targets = []
+
+    with torch.no_grad():
+        for loader, split in zip([train_loader, test_loader], ['train', 'test']):
+            if split == 'train':
+                continue
+
+            for batch_num, (images, labels) in enumerate(loader):
+                if batch_num % 10 == 0:
+                    print('Batch %d / %d' % (batch_num, len(loader)))
+
+                if batch_num == 0:
+                    imgs = images[0].squeeze().cpu().numpy()
+                    imgs = (imgs * 255).astype(np.uint8)
+                    print("shape: ", imgs.shape, type(imgs), imgs.max(), imgs.min())
+                    imgs = Image.fromarray(imgs)
+                    path_ = os.path.join(path, 'images.%s.png' % suffix)
+                    imgs.save(path_)
+
+                images = images.to('cuda')
+                batch_size, num_images = images.shape[:2]
+                
+                # Change view so that we can put everything through the model at once.
+                images = images.view(batch_size * num_images, *images.shape[2:])
+                # poses = model(images)
+                # poses = poses.cpu()
+                images = images.cpu()
+                # del images
+                # model_poses.append(poses.view(batch_size, -1))
+                targets.append(labels)
+                orig_images.append(images.view(batch_size, -1))
+
+            orig_images = torch.cat(orig_images, 0)
+            orig_images = orig_images.numpy()
+            # model_poses = torch.cat(model_poses, 0)
+            # model_poses = model_poses.numpy()
+            targets = torch.cat(targets, 0)
+            targets = targets.numpy().squeeze()
+
+            # orig_images = []
+
+            for x, key in zip([orig_images, model_poses], ['images', 'poses']):
+                if key == 'poses':
+                    continue
+
+                print('TSNEing the %s %s (%d)...' % (split, key, epoch))
+                embeddings = cudaTSNE(
+                    n_components=2, perplexity=30, learning_rate=100.0
+                    # perplexity=15, learning_rate=30.0
+                ).fit_transform(x)
+                # embeddings = multiTSNE(n_jobs=4).fit_transform(x)
+                vis_x = embeddings[:, 0]
+                vis_y = embeddings[:, 1]
+                plt.scatter(vis_x, vis_y, c=targets, cmap=plt.cm.get_cmap("jet", 10), marker='.')
+                plt.colorbar(ticks=range(10))
+                plt.clim(-0.5, 9.5)
+                path_ = os.path.join(path, 'tsne.%s.%s.%s%d.png' % (
+                    suffix, key, split, epoch))
+                plt.savefig(path_)
+                if comet_exp:
+                    if split == 'train':
+                        with comet_exp.train():
+                            comet_exp.log_image(path_)
+                    elif split == 'test':
+                        with comet_exp.test():
+                            comet_exp.log_image(path_)
+                    os.remove(path_)
+
+            model_poses = []
+            orig_images = []
+            targets = []
 
 
 class Averager():
@@ -776,7 +896,7 @@ def main(args):
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
 
-        if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
+        if args.do_tsne_test_every and epoch % args.do_tsne_test_every == 0 and epoch > args.do_tsne_test_after:
             print('\n***\nStarting MNist Test (%d)\n***' % epoch)
             linpred_train.run_ssl_model(
                 net, comet_exp, args.mnist_batch_size, args.colored,
@@ -817,6 +937,14 @@ if __name__ == '__main__':
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'every this many epochs.')
     parser.add_argument('--do_mnist_test_after',
+                        default=10, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'starting at this epoch.')
+    parser.add_argument('--do_tsne_test_every',
+                        default=None, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'every this many epochs.')
+    parser.add_argument('--do_tsne_test_after',
                         default=10, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'starting at this epoch.')
