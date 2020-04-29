@@ -596,17 +596,17 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                   
+                    averages[key] = Averager()
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion in ['triangle_margin2_angle_nce']:
             images = images.to(device)
-            loss, stats = net.module.get_triangle_nce_loss(images, device, args)
+            loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                   
+                    averages[key] = Averager()                   
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
@@ -744,6 +744,16 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 for key, value in stats.items():
                     if key not in averages:
                         averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items()])
+            elif criterion in ['triangle_margin2_angle_nce']:
+                images = images.to(device)
+                loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()                   
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
@@ -941,7 +951,7 @@ def main(args):
 
         if 'triangle' not in args.criterion and \
            args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
-           test_acc >= .9875 and train_acc >= .9875 and epoch > 0:           
+           test_acc >= .975 and train_acc >= .975 and epoch > 0:           
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
@@ -1089,6 +1099,10 @@ if __name__ == '__main__':
                         default=1.0,
                         type=float,
                         help='temperature to multiply with the similarity')
+    parser.add_argument('--nce_lambda',
+                        default=1.0,
+                        type=float,
+                        help='lambda on the nce loss.')
     parser.add_argument('--use_random_anchor_frame',
                         default=False,
                         action='store_true',

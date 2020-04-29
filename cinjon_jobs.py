@@ -460,7 +460,6 @@ def run(find_counter=None):
     # Adding in more capsules worked well. Let's try the same, but push down
     # the margin_gamm2 even more and add in weight decay. We can prolly try
     # these models after doing this.
-    print(counter)
     job.update({
         'name': '2020.04.27',
     })
@@ -473,7 +472,7 @@ def run(find_counter=None):
     time = 6
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -490,10 +489,78 @@ def run(find_counter=None):
     time = 6
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Annnnd nope. We gotta change the dataset to do fixed_moving_mnist.
+    # Otherwise, it's a total shit show with how it's linearized to begin with.
+    # It's just so much harder that way.
+    # We are no longer doing `triangle_margin` because it's not as sound as
+    # triangle_margin2.
+    # Counter: 231
+    job.update({
+        'name': '2020.04.29',
+        'fix_moving_mnist_center': True,
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin2', 'triangle_margin2_angle'],
+        'triangle_margin_lambda': [.3],
+        'margin_gamma2': [0.3, .1],
+        'weight_decay': [0, 5e-4]
+    }
+    time = 6
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
+
+    # Here we are doing discriminative MovingMNist1img.
+    # Counter: 239
+    job.update({
+        'name': '2020.04.29',
+        'criterion': 'xent',
+        'dataset': 'MovingMNist2.img1',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+    })
+    var_arrays = {
+        'fix_moving_mnist_center': [False, True],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here we are doing MovingMNist with optimizing angle, margin, and nce.
+    # Counter: 243
+    job.update({
+        'name': '2020.04.29',
+        'criterion': 'triangle_margin2_angle_nce',
+        'dataset': 'MovingMNist2',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+    })
+    var_arrays = {
+        'fix_moving_mnist_center': [False, True],
+        'triangle_margin_lambda': [.3, 1.],
+        'margin_gamma2': [.1, .3],
+        'triangle_cos_lambda': [1., 3.]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
 
     return None, None
             

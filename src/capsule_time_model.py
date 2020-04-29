@@ -596,12 +596,29 @@ def get_triangle_loss(self, images, device, args):
     return loss, stats
 
 
-def get_triangle_nce_loss(self, images, device, args):
+def get_triangle_nce_loss(model, images, device, args):
+    """Get linearizing loss AND the NCE loss.
+
+    We optimize the NCE(f1_i, f3_j) so that the model learns to distinguish the
+    objects here from other objects.
+
+    However, this will have the tendency to push the pose to be the same. We
+    don't want that because we want pose to have meaning related to affine
+    transformations.
+
+    That meaning can come from S&L or it can come from linearization. Here, we
+    choose to do linearization.
+
+    That means optimizing the angle between (f1, f2) and (f1, f3) to be zero
+    so that the pose is linear. This can lead to degenerate solutions though
+    because the easiest thing to do then is to make fk_i equal for all k. So we
+    further also add a margin loss between (f1, f2) and (f1, f3).
+    """
     batch_size, num_images = images.shape[:2]
 
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
-    pose = self(images)
+    pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
     
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
@@ -610,54 +627,64 @@ def get_triangle_nce_loss(self, images, device, args):
     
     segment_13 = pose[:, 2, :] - pose[:, 0, :]
     segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    segment_23 = pose[:, 2, :] - pose[:, 1, :]
+
+    # Optimize the angle between (f1, f2) and (f1, f3).
     cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+
+    # Get the margin_loss on segment_12 and semgent_23.
+    margin_loss_23 = torch.norm(segment_23, dim=1)
+    margin_loss_23 = args.margin_gamma2 - margin_loss_23
+    margin_loss_23 = F.relu(margin_loss_23).sum()
+    margin_loss_12 = torch.norm(segment_12, dim=1)
+    margin_loss_12 = args.margin_gamma2 - margin_loss_12
+    margin_loss_12 = F.relu(margin_loss_12).sum()
+
+    # Get the NCE loss.
+    anchor = pose[:, 0, :]
+    other = pose[:, 2, :]
+    batch_size = anchor.size(0)
+    anchor_normalized = anchor / anchor.norm(dim=2, keepdim=True)
+    anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+    other_normalized = other / other.norm(dim=2, keepdim=True)
+    other_normalized = other_normalized.view(1, batch_size, -1)
+    # similarity will be [bs, bs, num_capsules * num_dims] after this.
+    similarity = anchor_normalized * other_normalized
+    # now multiply by the temperature.
+    similarity *= args.nce_temperature
+    # and then sum to get the dot product (cosign similarity).
+    # this is [bs, bs]. the positive samples are on the diagonal.
+    similarity = similarity.sum(2)    
+    # the diagonal has the positive similarity = log(exp(sim(x, y)))
+    identity = torch.eye(batch_size).to(similarity.device)
+    positive_similarity = (similarity * identity).sum(1)
     
-    if args.criterion == 'triangle_margin2_angle':
-        # Here, we optimize the angle between them. We will pair it down
-        # below with the margin_loss_12 + margin_loss_23.
-        loss = -cosine_sim_13_12
-    else:
-        # Here, we optimize the triangle expression. This going to zero
-        # should surrogate optimize the angle above.
-        loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
+    # we get the total similarity by taking the logsumexp of similarity.
+    log_sum_total = torch.logsumexp(similarity, dim=1)    
+    diff = positive_similarity - log_sum_total
+    nce = -diff.mean()
+
+    total_similarity = similarity.sum(1)
+    negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+    positive_similarity = positive_similarity.mean().item()
+
+    loss = -cosine_sim_13_12 * args.triangle_cos_lambda
+    loss += margin_loss_23 * args.triangle_margin_lambda
+    loss += margin_loss_12 * args.triangle_margin_lambda
+    loss += nce * args.nce_lambda
         
     stats = {
         'frame_12_sim': sim_12.item(),
         'frame_23_sim': sim_23.item(),
         'frame_13_sim': sim_13.item(),
         'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
-        'cosine_sim_13_12': cosine_sim_13_12.item()
+        'cosine_sim_13_12': cosine_sim_13_12.item(),
+        'margin_loss_23': margin_loss_23.item(),
+        'margin_loss_12': margin_loss_12.item(),
+        'pos_sim': positive_similarity,
+        'neg_sim': negative_similarity,
+        'nce': nce.item()
     }
-    
-    if args.criterion == 'triangle_cos':
-        # We want to minimize cosine similarity. Maximizing it would mean
-        # that the angle between them was theta.
-        cos_sim_13 = F.cosine_similarity(pose[:, 0, :], pose[:, 2, :]).mean()
-        stats['frame_13_cossim'] = cos_sim_13.item()
-        loss += args.triangle_cos_lambda * cos_sim_13
-    elif args.criterion == 'triangle_margin':
-        # We want to try to get the distance between pose of frames 1 and 3
-        # to be at least the margin size.
-        margin_loss = torch.norm(segment_13, dim=1)
-        margin_loss = args.margin_gamma - margin_loss
-        margin_loss = F.relu(margin_loss).sum()
-        loss += margin_loss * args.triangle_margin_lambda
-        stats['margin_loss'] = margin_loss.item()
-    elif args.criterion in ['triangle_margin2', 'triangle_margin2_angle']:
-        # Here we put the margin_loss on segmnet_12 and semgnet_23 instead.
-        segment_23 = pose[:, 2, :] - pose[:, 1, :]
-        margin_loss_23 = torch.norm(segment_23, dim=1)
-        margin_loss_23 = args.margin_gamma2 - margin_loss_23
-        margin_loss_23 = F.relu(margin_loss_23).sum()
-        loss += margin_loss_23 * args.triangle_margin_lambda
-        
-        margin_loss_12 = torch.norm(segment_12, dim=1)
-        margin_loss_12 = args.margin_gamma2 - margin_loss_12
-        margin_loss_12 = F.relu(margin_loss_12).sum()
-        loss += margin_loss_12 * args.triangle_margin_lambda
-        
-        stats['margin_loss_23'] = margin_loss_23.item()
-        stats['margin_loss_12'] = margin_loss_12.item()
-        stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+    stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
         
     return loss, stats
