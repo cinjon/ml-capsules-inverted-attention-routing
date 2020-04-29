@@ -452,6 +452,44 @@ def run(find_counter=None):
     time = 6
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Adding in more capsules worked well. Let's try the same, but push down
+    # the margin_gamm2 even more and add in weight decay. We can prolly try
+    # these models after doing this.
+    print(counter)
+    job.update({
+        'name': '2020.04.27',
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin2', 'triangle_margin2_angle'],
+        'triangle_margin_lambda': [.1, .3, 1.],
+        'margin_gamma2': [0.01, 0.03, .1],
+        'weight_decay': [0]
+    }
+    time = 6
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+    # Same thing as above but with triangle_margin
+    job.update({
+        'name': '2020.04.27',
+    })
+    var_arrays = {
+        'criterion': ['triangle_margin'],
+        'triangle_margin_lambda': [.1, .3, 1.],
+        'margin_gamma': [0.01, 0.03, .1],
+        'weight_decay': [0]
+    }
+    time = 6
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
