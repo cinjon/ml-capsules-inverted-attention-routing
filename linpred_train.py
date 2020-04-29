@@ -87,7 +87,7 @@ def get_loaders(args=None, data_root=None, batch_size=None):
     return train_loader, test_loader, affnist_loader
 
 
-def run_ssl_model(model, comet_exp, batch_size, colored, num_workers,
+def run_ssl_model(ssl_epoch, model, comet_exp, batch_size, colored, num_workers,
                   config_params, backbone, num_routing, num_frames, lr,
                   weight_decay):
     train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
@@ -135,30 +135,42 @@ def run_ssl_model(model, comet_exp, batch_size, colored, num_workers,
             param.requires_grad = False
 
     start_epoch = 0
-    total_epochs = 50
+    total_epochs = 20
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss, train_acc = train(epoch, net, optimizer, train_loader)
         if comet_exp is not None:
             with comet_exp.train():
-                comet_exp.log_metrics({'acc/mnist': train_acc, 'loss/mnist': train_loss})
+                comet_exp.log_metrics(
+                    {'ssl%d acc/mnist' % ssl_epoch: train_acc,
+                     'ssl%d loss/mnist' % ssl_epoch: train_loss},
+                    step=epoch
+                )
 
         test_loss, test_acc = test(epoch, net, test_loader)
+        test_metrics = {
+            'ssl%d acc/mnist' % ssl_epoch: test_acc,
+            'ssl%d loss/mnist' % ssl_epoch: test_loss
+        }
+        loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
+            train_loss, test_loss
+        )                    
+        acc_str = 'Train Acc %.6f, Test Acc %.6f' % (
+            train_acc, test_acc
+        )        
+                
         if test_acc > .9:
             affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader)
+            test_metrics.update({
+                'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
+                'ssl%d loss/affnist' % ssl_epoch: affnist_loss
+            })
+            loss_str += ', Affnist Loss %.6f' % affnist_loss
+            acc_str += ', Affnist Acc %.6f' % affnist_acc
 
         if comet_exp is not None:
             with comet_exp.test():
-                comet_exp.log_metrics({
-                    'acc/mnist': test_acc, 'loss/mnist': test_loss,
-                    'acc/affnist': affnist_acc, 'loss/affnist': affnist_loss
-                })
+                comet_exp.log_metrics(test_metrics, step=epoch)
 
-        loss_str = 'Train Loss %.6f, Test Loss %.6f, Affnist Loss %.6f' % (
-            train_loss, test_loss, affnist_loss
-        )
-        acc_str = 'Train Acc %.6f, Test Acc %.6f, Affnist Acc %.6f' % (
-            train_acc, test_acc, affnist_acc
-        )
         print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
 
 

@@ -769,6 +769,16 @@ def main(args):
         if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
             print('\n***\nStarting MNist Test (%d)\n***' % epoch)
             linpred_train.run_ssl_model(
+                epoch, net, comet_exp, args.mnist_batch_size, args.colored,
+                args.num_workers, config['params'], args.backbone,
+                args.num_routing, num_frames, args.mnist_lr,
+                args.mnist_weight_decay)
+            print('\n***\nEnded MNist Test (%d)\n***' % epoch)
+
+
+        if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
+            print('\n***\nStarting MNist Test (%d)\n***' % epoch)
+            linpred_train.run_ssl_model(
                 net, comet_exp, args.mnist_batch_size, args.colored,
                 args.num_workers, config['params'], args.backbone,
                 args.num_routing, num_frames, args.mnist_lr,
