@@ -43,7 +43,6 @@ from src.resnet_reorder_model import ReorderResNet
 def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
              comet_exp=None):
     from tsnecuda import TSNE as cudaTSNE
-    from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     if use_moving_mnist:
         train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
@@ -96,38 +95,35 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
                 if batch_num % 10 == 0:
                     print('Batch %d / %d' % (batch_num, len(loader)))
 
-                if batch_num == 0:
-                    imgs = images[0].squeeze().cpu().numpy()
-                    imgs = (imgs * 255).astype(np.uint8)
-                    print("shape: ", imgs.shape, type(imgs), imgs.max(), imgs.min())
-                    imgs = Image.fromarray(imgs)
-                    path_ = os.path.join(path, 'images.%s.png' % suffix)
-                    imgs.save(path_)
+                # if batch_num == 0:
+                #     imgs = images[0].squeeze().cpu().numpy()
+                #     imgs = (imgs * 255).astype(np.uint8)
+                #     imgs = Image.fromarray(imgs)
+                #     path_ = os.path.join(path, 'images.%s.png' % suffix)
+                #     imgs.save(path_)
 
                 images = images.to('cuda')
                 batch_size, num_images = images.shape[:2]
                 
                 # Change view so that we can put everything through the model at once.
                 images = images.view(batch_size * num_images, *images.shape[2:])
-                # poses = model(images)
-                # poses = poses.cpu()
+                poses = model(images)
+                poses = poses.cpu()
                 images = images.cpu()
-                # del images
-                # model_poses.append(poses.view(batch_size, -1))
+                del images
+                model_poses.append(poses.view(batch_size, -1))
                 targets.append(labels)
-                orig_images.append(images.view(batch_size, -1))
+                # orig_images.append(images.view(batch_size, -1))
 
-            orig_images = torch.cat(orig_images, 0)
-            orig_images = orig_images.numpy()
-            # model_poses = torch.cat(model_poses, 0)
-            # model_poses = model_poses.numpy()
+            # orig_images = torch.cat(orig_images, 0)
+            # orig_images = orig_images.numpy()
+            model_poses = torch.cat(model_poses, 0)
+            model_poses = model_poses.numpy()
             targets = torch.cat(targets, 0)
             targets = targets.numpy().squeeze()
 
-            # orig_images = []
-
             for x, key in zip([orig_images, model_poses], ['images', 'poses']):
-                if key == 'poses':
+                if key == 'images':
                     continue
 
                 print('TSNEing the %s %s (%d)...' % (split, key, epoch))
