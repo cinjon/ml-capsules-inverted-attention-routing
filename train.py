@@ -41,16 +41,16 @@ from src.resnet_reorder_model import ReorderResNet
 
 
 def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
-             comet_exp=None):
+             comet_exp=None, center_start=True):
     from tsnecuda import TSNE as cudaTSNE
 
     if use_moving_mnist:
         train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
                                  colored=False, tiny=False, num_digits=1,
-                                 one_data_loop=True)
+                                 one_data_loop=True, center_start=center_start)
         test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
                                 colored=False, tiny=False, num_digits=1,
-                                one_data_loop=True)
+                                one_data_loop=True, center_start=center_start)
         suffix = 'movmnist64fix'
     elif use_mnist:
         train_set = torchvision.datasets.MNIST(
@@ -196,11 +196,13 @@ def get_loaders(args):
         train_set = MovingMNist2(train=True, seq_len=5, image_size=64,
                                  colored=args.colored, tiny=False,
                                  is_triangle_loss='triangle' in args.criterion,
-                                 num_digits=args.num_mnist_digits)
+                                 num_digits=args.num_mnist_digits,
+                                 center_start=args.fix_moving_mnist_center)
         test_set = MovingMNist2(train=False, seq_len=5, image_size=64,
                                 colored=args.colored, tiny=False,
                                 is_triangle_loss='triangle' in args.criterion,
-                                num_digits=args.num_mnist_digits)
+                                num_digits=args.num_mnist_digits,
+                                center_start=args.fix_moving_mnist_center)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -1113,6 +1115,8 @@ if __name__ == '__main__':
     # MovingMNist 2 info
     parser.add_argument('--no_colored', action='store_true',
                         help='whether to not use colored mnist')
+    parser.add_argument('--fix_moving_mnist_center', action='store_true',
+                        help='whether to fix the center of moving mnist.')
     parser.add_argument('--num_mnist_digits', type=int, default=2,
                         help='the number of digits to use in moving mnist.')
 
@@ -1131,6 +1135,7 @@ if __name__ == '__main__':
             setattr(args, key, value)
         print(counter, job, '\n', args, '\n')
 
+    args.fix_moving_mnist_center = True
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
     args.colored = not args.no_colored
