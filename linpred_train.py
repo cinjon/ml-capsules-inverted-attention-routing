@@ -87,12 +87,12 @@ def get_loaders(args=None, data_root=None, batch_size=None):
     return train_loader, test_loader, affnist_loader
 
 
-def run_ssl_model(ssl_epoch, model, comet_exp, batch_size, colored, num_workers,
-                  config_params, backbone, num_routing, num_frames, lr,
-                  weight_decay):
-    train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
+def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_size,
+                  colored, num_workers, config_params, backbone, num_routing,
+                  num_frames, lr, weight_decay, affnist_subset):
+    train_set = MovingMNist2(mnist_root, train=True, seq_len=1, image_size=64,
                              colored=colored, tiny=False, num_digits=1)
-    test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
+    test_set = MovingMNist2(mnist_root, train=False, seq_len=1, image_size=64,
                             colored=colored, tiny=False, num_digits=1)
     train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                batch_size=batch_size,
@@ -102,9 +102,9 @@ def run_ssl_model(ssl_epoch, model, comet_exp, batch_size, colored, num_workers,
                                               batch_size=batch_size,
                                               shuffle=False,
                                               num_workers=num_workers)
-    affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+    # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
     affnist_test_set = AffNist(
-        affnist_root, train=False, subset=False,
+        affnist_root, train=False, subset=affnist_subset,
         transform=transforms.Compose([
             transforms.Pad(12),
             transforms.ToTensor(),
@@ -153,11 +153,11 @@ def run_ssl_model(ssl_epoch, model, comet_exp, batch_size, colored, num_workers,
         }
         loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
             train_loss, test_loss
-        )                    
+        )
         acc_str = 'Train Acc %.6f, Test Acc %.6f' % (
             train_acc, test_acc
-        )        
-                
+        )
+
         if test_acc > .9:
             affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader)
             test_metrics.update({
@@ -225,7 +225,7 @@ def train(epoch, net, optimizer, loader):
                                   time.time() - t, averages['loss'].item())
             )
             t = time.time()
-            
+
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item()
     return train_loss, train_acc
@@ -270,7 +270,7 @@ def test(epoch, net, loader):
 def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-    
+
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -386,7 +386,7 @@ def main(args):
             with open(store_file, 'wb') as f:
                 pickle.dump(results, f)
 
-        return 
+        return
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss, train_acc = train(epoch, net, optimizer, args.criterion, train_loader, args, device)

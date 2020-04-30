@@ -148,6 +148,9 @@ class CapsTimeModel(nn.Module):
             num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
             self.mnist_classifier_head = nn.Linear(num_params, 10)
 
+    def get_ordering(self, x):
+        return self.ordering_head(x)
+
     def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False,
                 flatten=False, return_mnist_head=False):
         #### Forward Pass
@@ -263,17 +266,17 @@ def get_triplet_loss(model, images):
     with torch.no_grad():
         positive_distance = float(torch.dist(inputs_v, positive_v, 2).item())
         negative_distance = float(torch.dist(inputs_v, negative_v, 2).item())
-    
+
     stats = {'positive_distance': positive_distance,
              'negative_distance': negative_distance}
-    
+
     return loss, stats
 
 
 def get_nce_loss(model, images, args):
     positive_frame_num = args.nce_positive_frame_num
     use_random_anchor_frame = args.use_random_anchor_frame
-    
+
     if use_random_anchor_frame:
         # NOTE: not implemented.
         raise
@@ -296,7 +299,7 @@ def get_nce_loss(model, images, args):
     anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
     other_normalized = other / other.norm(dim=2, keepdim=True)
     other_normalized = other_normalized.view(1, batch_size, -1)
-    
+
     # similarity will be [bs, bs, num_capsules * num_dims] after this.
     similarity = anchor_normalized * other_normalized
     # now multiply by the temperature.
@@ -304,17 +307,17 @@ def get_nce_loss(model, images, args):
     # and then sum to get the dot product (cosign similarity).
     # this is [bs, bs]. the positive samples are on the diagonal.
     similarity = similarity.sum(2)
-    
+
     # the diagonal has the positive similarity = log(exp(sim(x, y)))
     identity = torch.eye(batch_size).to(similarity.device)
     positive_similarity = (similarity * identity).sum(1)
-    
+
     # we get the total similarity by taking the logsumexp of similarity.
     log_sum_total = torch.logsumexp(similarity, dim=1)
-    
+
     diff = positive_similarity - log_sum_total
     nce = -diff.mean()
-    
+
     total_similarity = similarity.sum(1)
     negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
     positive_similarity = positive_similarity.mean().item()
@@ -345,13 +348,13 @@ def get_reorder_loss(model, images, device, args, labels=None):
     #     print(arr.shape, arr.dtype)
     #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
     #     img.save(path % (int(use_positive), i))
-    
+
     batch_size, num_images = images.shape[:2]
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
     pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
-    
+
     # presence = presence.view(batch_size, num_images, *presence.shape[1:])
     # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
     # We now want object_presence to be equal across frames and
@@ -360,7 +363,7 @@ def get_reorder_loss(model, images, device, args, labels=None):
     # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
     # object_presence = object_ * presence
     # object_pose_presence = object_presence * pose
-    
+
     # Get that the image representations should be the same.
     # object_presence = object_presence.view(batch_size, num_images, -1)
     # Going with cosine similarity here.
@@ -371,17 +374,17 @@ def get_reorder_loss(model, images, device, args, labels=None):
     #      transposed_object_presence[:, :, :-1]),
     #     dim=2
     # )
-    
+
     # cosine_sim = F.cosine_similarity(
     #     transposed_object_presence, rolled_object_presence, dim=1)
-    
+
     # Get the ordering.
     # flattened = object_pose_presence.view(batch_size, -1)
     flattened = pose.view(batch_size, -1)
 
     # TODO: Change this in order to get it working with DDP
-    ordering = model.ordering_head(flattened).squeeze(-1)
-    
+    ordering = model.module.ordering_head(flattened).squeeze(-1)
+
     # loss_objects = -cosine_sim.sum(1)
     # loss_sparsity = presence.sum((1, 2))
     # loss_objects = loss_objects.mean()
@@ -389,12 +392,12 @@ def get_reorder_loss(model, images, device, args, labels=None):
     loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
     predictions = torch.sigmoid(ordering) > 0.5
     accuracy = (predictions == labels).float().mean().item()
-    
+
     total_loss = sum([
         args.lambda_ordering * loss_ordering,
         # args.lambda_object_sim * loss_objects
     ])
-    
+
     stats = {
         'accuracy': accuracy,
         # 'objects_sim_loss': loss_objects.item(),
@@ -411,16 +414,16 @@ def get_reorder_loss2(model, images, device, args, labels=None):
     """
     # images come in as [bs, num_imgs, ch, w, h]. we want to pick from
     # this three frames to use as either positive or negative.
-    
+
     # select frames (a, b, c, d, e)
     range_size = int(images.shape[1] / 5)
     sample = [random.choice(range(i*range_size, (i+1)*range_size))
               for i in range(5)]
-    
+
     # Maybe flip the list's order.
     if random.random() > 0.5:
         sample = list(reversed(sample))
-        
+
     use_positive = random.random() > 0.5
     if use_positive:
         # frames (b, c, d, e), (a, b, c, d), (e, d, c, b), or (d, c, b, a).
@@ -444,9 +447,9 @@ def get_reorder_loss2(model, images, device, args, labels=None):
             selection = [sample[0], sample[3], sample[1], sample[2]]
         else:
             selection = [sample[1], sample[4], sample[2], sample[3]]
-            
+
     images = images[:, selection]
-    
+
     # path = '/misc/kcgscratch1/ChoGroup/resnick/mm2.vid%d.frame%d.after%d.png'
     # for batch_num in range(len(images)):
     #     image = images[batch_num].numpy()
@@ -466,16 +469,16 @@ def get_reorder_loss2(model, images, device, args, labels=None):
     #     print(arr.shape, arr.dtype)
     #     img = Image.fromarray(np.transpose(arr, (1, 2, 0)))
     #     img.save(path % (int(use_positive), i))
-    
+
     batch_size, num_images = images.shape[:2]
     images = images.to(device)
     labels = torch.tensor([use_positive]*batch_size).type(torch.FloatTensor).to(images.device)
-    
+
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
     pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
-    
+
     # presence = presence.view(batch_size, num_images, *presence.shape[1:])
     # object_ = object_.view(batch_size, num_images, *object_.shape[1:])
     # We now want object_presence to be equal across frames and
@@ -484,7 +487,7 @@ def get_reorder_loss2(model, images, device, args, labels=None):
     # [4,3,10,16] ... [4,3,10,1] ... [4,3,,10,36]
     # object_presence = object_ * presence
     # object_pose_presence = object_presence * pose
-    
+
     # Get that the image representations should be the same.
     # object_presence = object_presence.view(batch_size, num_images, -1)
     # Going with cosine similarity here.
@@ -495,15 +498,15 @@ def get_reorder_loss2(model, images, device, args, labels=None):
     #      transposed_object_presence[:, :, :-1]),
     #     dim=2
     # )
-    
+
     # cosine_sim = F.cosine_similarity(
     #     transposed_object_presence, rolled_object_presence, dim=1)
-    
+
     # Get the ordering.
     # flattened = object_pose_presence.view(batch_size, -1)
     flattened = pose.view(batch_size, -1)
     ordering = model.ordering_head(flattened).squeeze(-1)
-    
+
     # loss_objects = -cosine_sim.sum(1)
     # loss_sparsity = presence.sum((1, 2))
     # loss_objects = loss_objects.mean()
@@ -511,12 +514,12 @@ def get_reorder_loss2(model, images, device, args, labels=None):
     loss_ordering = F.binary_cross_entropy_with_logits(ordering, labels)
     predictions = torch.sigmoid(ordering) > 0.5
     accuracy = (predictions == labels).float().mean().item()
-    
+
     total_loss = sum([
         args.lambda_ordering * loss_ordering,
         # args.lambda_object_sim * loss_objects
     ])
-    
+
     stats = {
         'accuracy': accuracy,
         # 'objects_sim_loss': loss_objects.item(),
@@ -536,15 +539,15 @@ def get_triangle_loss(self, images, device, args):
     # With 1channel, it is torch.Size([12, 5, 2, 36])
     # NOTE: This is ... [bs, ni, 2] when doing the 1channel... is that right?
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
-    
+
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
     sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
     sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
-    
+
     segment_13 = pose[:, 2, :] - pose[:, 0, :]
     segment_12 = pose[:, 1, :] - pose[:, 0, :]
     cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
-    
+
     if args.criterion == 'triangle_margin2_angle':
         # Here, we optimize the angle between them. We will pair it down
         # below with the margin_loss_12 + margin_loss_23.
@@ -553,7 +556,7 @@ def get_triangle_loss(self, images, device, args):
         # Here, we optimize the triangle expression. This going to zero
         # should surrogate optimize the angle above.
         loss = sim_12 + sim_23 - args.triangle_lambda * sim_13
-        
+
     stats = {
         'frame_12_sim': sim_12.item(),
         'frame_23_sim': sim_23.item(),
@@ -561,7 +564,7 @@ def get_triangle_loss(self, images, device, args):
         'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
         'cosine_sim_13_12': cosine_sim_13_12.item()
     }
-    
+
     if args.criterion == 'triangle_cos':
         # We want to minimize cosine similarity. Maximizing it would mean
         # that the angle between them was theta.
@@ -583,16 +586,16 @@ def get_triangle_loss(self, images, device, args):
         margin_loss_23 = args.margin_gamma2 - margin_loss_23
         margin_loss_23 = F.relu(margin_loss_23).sum()
         loss += margin_loss_23 * args.triangle_margin_lambda
-        
+
         margin_loss_12 = torch.norm(segment_12, dim=1)
         margin_loss_12 = args.margin_gamma2 - margin_loss_12
         margin_loss_12 = F.relu(margin_loss_12).sum()
         loss += margin_loss_12 * args.triangle_margin_lambda
-        
+
         stats['margin_loss_23'] = margin_loss_23.item()
         stats['margin_loss_12'] = margin_loss_12.item()
         stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
-        
+
     return loss, stats
 
 
@@ -620,11 +623,11 @@ def get_triangle_nce_loss(model, images, device, args):
     images = images.view(batch_size * num_images, *images.shape[2:])
     pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
-    
+
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
     sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
     sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
-    
+
     segment_13 = pose[:, 2, :] - pose[:, 0, :]
     segment_12 = pose[:, 1, :] - pose[:, 0, :]
     segment_23 = pose[:, 2, :] - pose[:, 1, :]
@@ -654,13 +657,13 @@ def get_triangle_nce_loss(model, images, device, args):
     similarity *= args.nce_temperature
     # and then sum to get the dot product (cosign similarity).
     # this is [bs, bs]. the positive samples are on the diagonal.
-    similarity = similarity.sum(2)    
+    similarity = similarity.sum(2)
     # the diagonal has the positive similarity = log(exp(sim(x, y)))
     identity = torch.eye(batch_size).to(similarity.device)
     positive_similarity = (similarity * identity).sum(1)
-    
+
     # we get the total similarity by taking the logsumexp of similarity.
-    log_sum_total = torch.logsumexp(similarity, dim=1)    
+    log_sum_total = torch.logsumexp(similarity, dim=1)
     diff = positive_similarity - log_sum_total
     nce = -diff.mean()
 
@@ -672,7 +675,7 @@ def get_triangle_nce_loss(model, images, device, args):
     loss += margin_loss_23 * args.triangle_margin_lambda
     loss += margin_loss_12 * args.triangle_margin_lambda
     loss += nce * args.nce_lambda
-        
+
     stats = {
         'frame_12_sim': sim_12.item(),
         'frame_23_sim': sim_23.item(),
@@ -686,5 +689,5 @@ def get_triangle_nce_loss(model, images, device, args):
         'nce': nce.item()
     }
     stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
-        
+
     return loss, stats

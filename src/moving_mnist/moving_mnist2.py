@@ -10,19 +10,26 @@ from torchvision.datasets.utils import download_url, makedir_exist_ok
 
 
 class MovingMNIST(data.Dataset):
-    def __init__(self, train=True, seq_len=20, skip=1,
+    def __init__(self, root, train=True, seq_len=20, skip=1,
                  image_size=64, colored=True, tiny=False,
-                 is_triangle_loss=False, num_digits=2,
-                 one_data_loop=False, center_start=False): 
+                 is_triangle_loss=False, is_reorder_loss=False,
+                 num_digits=2, one_data_loop=False,
+                 center_start=False, step_length=0.035,
+                 positive_ratio=0.5):
+        self.root = root
         self.is_triangle_loss = is_triangle_loss
+        self.is_reorder_loss = is_reorder_loss
 
         data, labels = self.load_dataset(train)
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
         self.data_handler = handler(
             data, labels, seq_len, skip, image_size,
-            is_triangle_loss=is_triangle_loss, num_digits=num_digits,
-            train=train, center_start=center_start)
+            is_triangle_loss=is_triangle_loss,
+            is_reorder_loss=is_reorder_loss,
+            num_digits=num_digits, step_length=step_length,
+            train=train, center_start=center_start,
+            positive_ratio=positive_ratio)
 
         if one_data_loop:
             self.data_size = len(data)
@@ -42,10 +49,10 @@ class MovingMNIST(data.Dataset):
             else "t10k-labels-idx1-ubyte.gz"
 
         # Download data if not exist
-        root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/'
-        makedir_exist_ok(root)
-        img_filepath = self.download(root, img_filename)
-        lbl_filepath = self.download(root, lbl_filename)
+        # root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/'
+        makedir_exist_ok(self.root)
+        img_filepath = self.download(self.root, img_filename)
+        lbl_filepath = self.download(self.root, lbl_filename)
 
         # Load image data
         with gzip.open(img_filepath, "rb") as f:
@@ -81,15 +88,17 @@ class MovingMNIST(data.Dataset):
 class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, data, labels, seq_length = 20, skip=1,
-                 output_image_size=64, is_triangle_loss=False, num_digits=2,
-                 train=False, center_start=False):
+    def __init__(self, data, labels, seq_length=20, skip=1,
+                 output_image_size=64, is_triangle_loss=False,
+                 is_reorder_loss=False, num_digits=2,
+                 step_length=0.035, train=False, center_start=False,
+                 positive_ratio=0.5):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
         self.output_image_size = output_image_size
         self.num_digits_ = num_digits
-        self.step_length_ = 0.035 # NOTE: was 0.1
+        self.step_length_ = step_length # NOTE: was 0.1
 
         self.digit_size_ = 28
         self.frame_size_ = self.image_size_ ** 2
@@ -100,8 +109,10 @@ class _BouncingMNISTDataHandler(object):
         self.indices_ = np.arange(self.data_.shape[0])
         self.row_ = 0
         self.is_triangle_loss = is_triangle_loss
+        self.is_reorder_loss = is_reorder_loss
         self.train = train
         self.center_start = center_start
+        self.positive_ratio = positive_ratio
         if train:
             np.random.shuffle(self.indices_)
 
@@ -132,7 +143,9 @@ class _BouncingMNISTDataHandler(object):
 
         start_y = np.zeros((length, num_digits))
         start_x = np.zeros((length, num_digits))
-        for i in range(length * skip):
+        start_y[0] = y
+        start_x[0] = x
+        for i in range(1, length * skip):
             # Take a step along velocity.
             y += v_y * self.step_length_
             x += v_x * self.step_length_
@@ -170,7 +183,7 @@ class _BouncingMNISTDataHandler(object):
         # return b
 
     def resize(self, data, size):
-        output_data = np.zeros((self.seq_length_, size, size), 
+        output_data = np.zeros((self.seq_length_, size, size),
                                dtype=np.float32)
 
         for i, frame in enumerate(data):
@@ -222,6 +235,18 @@ class _BouncingMNISTDataHandler(object):
                 data = data[2:]
             else:
                 data = data[[0, 2, 4]]
+        elif self.is_reorder_loss:
+            use_positive = random.random() < self.positive_ratio
+            if use_positive:
+                data = data[1:4]
+                label = 1.
+            else:
+                if random.random() > 0.5:
+                    data = np.stack([data[1], data[0], data[3]])
+                else:
+                    data = np.stack([data[1], data[4], data[3]])
+                label = 0.
+
 
         if self.output_image_size == self.image_size_:
             ret = data
@@ -239,8 +264,8 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
 
         # minibatch data
         label = []
-        data = np.zeros((self.seq_length_, 
-                         self.image_size_, 
+        data = np.zeros((self.seq_length_,
+                         self.image_size_,
                          self.image_size_,
                          3),
                         dtype=np.float32)

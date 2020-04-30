@@ -40,20 +40,26 @@ import video_transforms
 from src.resnet_reorder_model import ReorderResNet
 
 
-def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
-             comet_exp=None, center_start=True):
+def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
+             use_mnist=False, comet_exp=None, center_start=True,
+             use_cuda_tsne=False, tsne_batch_size=8):
     # from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     # NOTE: Use this when it's the only thing on the GPU.
-    from tsnecuda import TSNE as cudaTSNE
+    if use_cuda_tsne:
+        from tsnecuda import TSNE as cudaTSNE
+    else:
+        from sklearn.manifold import TSNE
 
     if use_moving_mnist:
-        train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
-                                 colored=False, tiny=False, num_digits=1,
-                                 one_data_loop=True, center_start=center_start)
-        test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
-                                colored=False, tiny=False, num_digits=1,
-                                one_data_loop=True, center_start=center_start)
+        train_set = MovingMNist2(data_root, train=True, seq_len=1,
+                                 image_size=64, colored=False, tiny=False,
+                                 num_digits=1, one_data_loop=True,
+                                 center_start=center_start)
+        test_set = MovingMNist2(data_root, train=False, seq_len=1,
+                                image_size=64, colored=False, tiny=False,
+                                num_digits=1, one_data_loop=True,
+                                center_start=center_start)
         suffix = 'movmnist64fix%d' % int(center_start)
     elif use_mnist:
         train_set = torchvision.datasets.MNIST(
@@ -77,11 +83,11 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
         suffix = 'mnistpad18translateRand1'
 
     train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                               batch_size=72,
+                                               batch_size=tsne_batch_size,
                                                shuffle=False,
                                                num_workers=2)
     test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                              batch_size=72,
+                                              batch_size=tsne_batch_size,
                                               shuffle=False,
                                               num_workers=2)
 
@@ -107,7 +113,7 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
 
                 images = images.to('cuda')
                 batch_size, num_images = images.shape[:2]
-                
+
                 # Change view so that we can put everything through the model at once.
                 images = images.view(batch_size * num_images, *images.shape[2:])
                 poses = model(images)
@@ -134,9 +140,14 @@ def run_tsne(model, path, epoch, use_moving_mnist=False, use_mnist=False,
                 # embeddings = multiTSNE(
                 #     n_jobs=4, n_components=2, perplexity=30, learning_rate=100.0
                 # ).fit_transform(x)
-                embeddings = cudaTSNE(
-                    n_components=2, perplexity=30, learning_rate=100.0
-                ).fit_transform(x)
+                if use_cuda_tsne:
+                    embeddings = cudaTSNE(
+                        n_components=2, perplexity=30, learning_rate=100.0
+                    ).fit_transform(x)
+                else:
+                    embeddings = TSNE(
+                        n_components=2, perplexity=30, learning_rate=100.0
+                    ).fit_transform(x)
 
                 vis_x = embeddings[:, 0]
                 vis_y = embeddings[:, 1]
@@ -200,16 +211,22 @@ def get_loaders(args):
                                                   num_workers=args.num_workers)
         affnist_test_loader = None
     elif args.dataset == 'MovingMNist2':
-        train_set = MovingMNist2(train=True, seq_len=5, image_size=64,
-                                 colored=args.colored, tiny=False,
+        train_set = MovingMNist2(args.data_root, train=True, seq_len=5,
+                                 image_size=64, colored=args.colored, tiny=False,
                                  is_triangle_loss='triangle' in args.criterion,
+                                 is_reorder_loss='reorder' in args.criterion,
                                  num_digits=args.num_mnist_digits,
-                                 center_start=args.fix_moving_mnist_center)
-        test_set = MovingMNist2(train=False, seq_len=5, image_size=64,
-                                colored=args.colored, tiny=False,
+                                 center_start=args.fix_moving_mnist_center,
+                                 step_length=args.step_length,
+                                 positive_ratio=args.positive_ratio)
+        test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
+                                image_size=64, colored=args.colored, tiny=False,
                                 is_triangle_loss='triangle' in args.criterion,
+                                is_reorder_loss='reorder' in args.criterion,
                                 num_digits=args.num_mnist_digits,
-                                center_start=args.fix_moving_mnist_center)
+                                center_start=args.fix_moving_mnist_center,
+                                step_length=args.step_length,
+                                positive_ratio=args.positive_ratio)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -218,9 +235,9 @@ def get_loaders(args):
                                                   batch_size=args.batch_size,
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
-        affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
+        # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
-            affnist_root, train=False, subset=False,
+            args.affnist_root, train=False, subset=args.affnist_subset,
             transform=transforms.Compose([
                 transforms.Pad(12),
                 transforms.ToTensor(),
@@ -229,13 +246,13 @@ def get_loaders(args):
         affnist_test_loader = torch.utils.data.DataLoader(
             affnist_test_set, batch_size=args.batch_size, shuffle=False)
     elif args.dataset == 'MovingMNist2.img1':
-        train_set = MovingMNist2(train=True, seq_len=1, image_size=64,
+        train_set = MovingMNist2(args.data_root, train=True, seq_len=1, image_size=64,
                                  colored=args.colored, tiny=False,
                                  one_data_loop=True,
                                  is_triangle_loss='triangle' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center)
-        test_set = MovingMNist2(train=False, seq_len=1, image_size=64,
+        test_set = MovingMNist2(args.data_root, train=False, seq_len=1, image_size=64,
                                 colored=args.colored, tiny=False,
                                 one_data_loop=True,
                                 is_triangle_loss='triangle' in args.criterion,
@@ -579,7 +596,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
-            del images
+            # del images
         elif criterion == 'reorder2':
             loss, stats = capsule_time_model.get_reorder_loss2(net, images, device, args, labels=labels)
             averages['loss'].add(loss.item())
@@ -596,8 +613,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                    averages[key] = Averager()
-                averages[key].add(value)
+                    averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion in ['triangle_margin2_angle_nce']:
@@ -606,8 +622,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                    averages[key] = Averager()                   
-                averages[key].add(value)
+                    averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
 
@@ -753,7 +768,7 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
-                        averages[key] = Averager()                   
+                        averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
@@ -951,7 +966,7 @@ def main(args):
 
         if 'triangle' not in args.criterion and \
            args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
-           test_acc >= .975 and train_acc >= .975 and epoch > 0:           
+           test_acc >= .975 and train_acc >= .975 and epoch > 0:
             print('\n***\nRunning affnist...')
             affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
@@ -962,10 +977,10 @@ def main(args):
         if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
             print('\n***\nStarting MNist Test (%d)\n***' % epoch)
             linpred_train.run_ssl_model(
-                epoch, net, comet_exp, args.mnist_batch_size, args.colored,
-                args.num_workers, config['params'], args.backbone,
-                args.num_routing, num_frames, args.mnist_lr,
-                args.mnist_weight_decay)
+                epoch, net, args.data_root, args.affnist_root, comet_exp,
+                args.mnist_batch_size, args.colored, args.num_workers,
+                config['params'], args.backbone, args.num_routing, num_frames,
+                args.mnist_lr, args.mnist_weight_decay, args.affnist_subset)
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
         if all([
@@ -975,8 +990,9 @@ def main(args):
         ]):
             print('\n***\nStarting TSNE (%d)\n***' % epoch)
             run_tsne(
-                net, store_dir, epoch, use_moving_mnist=True,
-                comet_exp=comet_exp, center_start=args.fix_moving_mnist_center)                
+                args.data_root, net, store_dir, epoch, use_moving_mnist=True,
+                comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
+                use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
         if not args.debug:
@@ -1047,8 +1063,7 @@ if __name__ == '__main__':
                         type=str,
                         help='type of backbone. simple or resnet')
     parser.add_argument('--data_root',
-                        default=('/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/'
-                                 'data/MovingMNist'),
+                        default='/misc/kcgscratch1/ChoGroup/resnick/vidcaps/MovingMNist/',
                         type=str,
                         help='root of where to put the data.')
     parser.add_argument('--results_dir', type=str, default='./contrastive_results',
@@ -1114,6 +1129,14 @@ if __name__ == '__main__':
                         help='the milestones in the LR.')
     parser.add_argument('--schedule_gamma', type=float, default=0.1,
                         help='the default LR gamma.')
+    parser.add_argument('--affnist_root',
+                        type=str,
+                        default='/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist',
+                        help='affnist data root')
+    parser.add_argument('--affnist_subset',
+                        default=False,
+                        action='store_true',
+                        help='whether to use subset of affnist or not')
 
     # Reordering
     parser.add_argument('--lambda_ordering',
@@ -1158,7 +1181,7 @@ if __name__ == '__main__':
     parser.add_argument('--fps', type=int, default=5, help='the fps for the loaded VideoClips')
     parser.add_argument('--count_videos', type=int, default=32, help='the number of video fiels to includuek')
     parser.add_argument('--count_clips', type=int, default=-1, help='the number of clips to includue')
-    parser.add_argument('--positive_ratio', type=float, default=0.25, help='positive ratio of reorder sequence')
+    parser.add_argument('--positive_ratio', type=float, default=0.5, help='positive ratio of reorder sequence')
     parser.add_argument('--min_distance', type=float, default=15, help='min(|a - b|, |d - e|)')
     parser.add_argument('--max_distance', type=float, default=60, help='|b - d|')
     parser.add_argument(
@@ -1199,6 +1222,14 @@ if __name__ == '__main__':
                         help='whether to fix the center of moving mnist.')
     parser.add_argument('--num_mnist_digits', type=int, default=2,
                         help='the number of digits to use in moving mnist.')
+    parser.add_argument('--step_length', type=float, default=0.035,
+                        help='step length in movingmnist2 sequence')
+
+    # TSNE info
+    parser.add_argument('--use_cuda_tsne', action='store_true',
+                        help='whether to use cudaTSNE or TSNE from sklearn')
+    parser.add_argument('--tsne_batch_size', type=int, default=8,
+                        help='batch size for tsne dataloader')
 
     args = parser.parse_args()
     if args.mode == 'jobarray':
