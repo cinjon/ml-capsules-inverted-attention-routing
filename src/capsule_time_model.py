@@ -26,6 +26,8 @@ class CapsTimeModel(nn.Module):
                  mnist_classifier_head=False,
                  num_frames=4,
                  is_discriminating_model=False, # Use True if original model.
+                 use_presence_probs=False,
+                 presence_temperature=1.0
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -50,7 +52,8 @@ class CapsTimeModel(nn.Module):
         elif backbone == 'resnet':
             self.pre_caps = layers.resnet_backbone(
                 params['backbone']['input_dim'],
-                params['backbone']['output_dim'], params['backbone']['stride'])
+                params['backbone']['output_dim'],
+                params['backbone']['stride'])
 
         ## Primary Capsule Layer (a single CNN)
         self.pc_layer = nn.Conv2d(in_channels=params['primary_capsules']['input_dim'],
@@ -148,6 +151,24 @@ class CapsTimeModel(nn.Module):
             num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
             self.mnist_classifier_head = nn.Linear(num_params, 10)
 
+        self.use_presence_probs = use_presence_probs
+        self.presence_temperature = presence_temperature
+        if use_presence_probs:
+            input_dim = params['backbone']['output_dim']
+            input_dim *= params['backbone']['out_img_size']**2
+            output_dim = params['class_capsules']['num_caps']
+            self.presence_prob_head = nn.Linear(input_dim, output_dim)
+
+    def get_presence(self, pre_caps):
+        logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
+        logits *= self.presence_temperature
+        # NOTE: we add noise here in order to try and spike it.
+        rand_noise = torch.FloatTensor(logits.size()).uniform_(-2, 2).to(logits.device)
+        logits += rand_noise
+        logits = torch.sigmoid(logits)
+        # logits = F.softmax(logits, 1)
+        return logits
+
     def get_ordering(self, x):
         return self.ordering_head(x)
 
@@ -155,7 +176,13 @@ class CapsTimeModel(nn.Module):
                 flatten=False, return_mnist_head=False):
         #### Forward Pass
         ## Backbone (before capsule)
+        # NOTE: pre_caps is [36, 128, 32, 32], or
+        # [batch_size*num_images, backone['output_dim'],
+        #  backbone['output_image_size], backbone['output_image_size']]
+        # Lulz, this is 32x the input shape for mnist of [36, 1, 64, 64].
         c = self.pre_caps(x)
+        if self.use_presence_probs:
+            presence_probs = self.get_presence(c)
 
         ## Primary Capsule Layer (a single CNN)
         u = self.pc_layer(c)
@@ -235,6 +262,8 @@ class CapsTimeModel(nn.Module):
             out = pose.view(pose_shape[0], -1)
             out = self.mnist_classifier_head(out)
             return out, pose
+        elif self.use_presence_probs:
+            return pose, presence_probs
         else:
             # return pose, presence, object_
             return pose
@@ -621,7 +650,11 @@ def get_triangle_nce_loss(model, images, device, args):
 
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
-    pose = model(images)
+    if args.use_presence_probs:
+        pose, presence_probs = model(images)
+        pose *= presence_probs[:, :, None]
+    else:
+        pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
 
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
@@ -647,9 +680,9 @@ def get_triangle_nce_loss(model, images, device, args):
     anchor = pose[:, 0, :]
     other = pose[:, 2, :]
     batch_size = anchor.size(0)
-    anchor_normalized = anchor / anchor.norm(dim=2, keepdim=True)
+    anchor_normalized = anchor / (anchor.norm(dim=2, keepdim=True) + 1e-6)
     anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
-    other_normalized = other / other.norm(dim=2, keepdim=True)
+    other_normalized = other / (other.norm(dim=2, keepdim=True) + 1e-6)
     other_normalized = other_normalized.view(1, batch_size, -1)
     # similarity will be [bs, bs, num_capsules * num_dims] after this.
     similarity = anchor_normalized * other_normalized
@@ -689,5 +722,38 @@ def get_triangle_nce_loss(model, images, device, args):
         'nce': nce.item()
     }
     stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+
+    if args.use_presence_probs:
+        # In addition to the loss, which is the total sum, we also want to get
+        # stats that include the sum per capsule as well as how close are the
+        # sums across images of the same video.
+        presence_loss = presence_probs.sum(1).mean()
+        loss += presence_loss * args.lambda_sparse_presence
+
+        mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+        std_per_capsule = [value.item() for value in presence_probs.std(0)]
+
+        presence_probs_image = presence_probs.view(
+            batch_size, num_images, -1)
+        l2_probs_12 = torch.norm(
+            presence_probs_image[:, 0, :] - presence_probs_image[:, 1, :],
+            dim=1).mean()
+        l2_probs_13 = torch.norm(
+            presence_probs_image[:, 0, :] - presence_probs_image[:, 2, :],
+            dim=1).mean()
+        l2_probs_23 = torch.norm(
+            presence_probs_image[:, 1, :] - presence_probs_image[:, 2, :],
+            dim=1).mean()
+
+        stats.update({
+            'presence_loss': presence_loss.item(),
+            'l2_presence_probs_12': l2_probs_12.item(),
+            'l2_presence_probs_13': l2_probs_13.item(),
+            'l2_presence_probs_23': l2_probs_23.item(),
+        })
+        for num, item in enumerate(mean_per_capsule):
+            stats['capsule_prob_mean_%d' % num] = item
+        for num, item in enumerate(std_per_capsule):
+            stats['capsule_prob_std_%d' % num] = item
 
     return loss, stats

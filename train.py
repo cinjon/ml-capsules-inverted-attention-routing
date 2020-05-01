@@ -117,6 +117,9 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                 # Change view so that we can put everything through the model at once.
                 images = images.view(batch_size * num_images, *images.shape[2:])
                 poses = model(images)
+                if type(poses) == tuple:
+                    poses, presence = poses
+                    poses *= presence[:, :, None]
                 poses = poses.cpu()
                 images = images.cpu()
                 del images
@@ -525,7 +528,8 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     total_negative_distance = 0.
 
     averages = {
-        'loss': Averager()
+        'loss': Averager(),
+        'grad_norm': Averager()
     }
 
     t = time.time()
@@ -613,7 +617,8 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                    averages[key].add(value)
+                    averages[key] = Averager()
+                averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion in ['triangle_margin2_angle_nce']:
@@ -622,9 +627,16 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
-                    averages[key].add(value)
+                    averages[key] = Averager()
+                averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
+
+        total_norm = 0.
+        for p in net.parameters():
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+        averages['grad_norm'].add(total_norm ** (1. / 2))
 
         loss.backward()
         optimizer.step()
@@ -831,13 +843,16 @@ def main(args):
             raise
         net = ReorderResNet(resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
     else:
-        net = capsule_time_model.CapsTimeModel(config['params'],
-                                               args.backbone,
-                                               args.dp,
-                                               args.num_routing,
-                                               sequential_routing=args.sequential_routing,
-                                               num_frames=num_frames,
-                                               is_discriminating_model=is_discriminating_model)
+        net = capsule_time_model.CapsTimeModel(
+            config['params'],
+            args.backbone,
+            args.dp,
+            args.num_routing,
+            sequential_routing=args.sequential_routing,
+            num_frames=num_frames,
+            is_discriminating_model=is_discriminating_model,
+            use_presence_probs=args.use_presence_probs,
+            presence_temperature=args.presence_temperature)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -1174,6 +1189,16 @@ if __name__ == '__main__':
                         type=float,
                         help='the gamma margin on how minimal we want ab/bc.')
 
+    # Presence
+    parser.add_argument('--use_presence_probs',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the presence probs from the pre_caps')
+    parser.add_argument('--presence_temperature',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the presence L1.')
+
     # VideoClip info
     parser.add_argument('--num_videoframes', type=int, default=100)
     parser.add_argument('--dist_videoframes', type=int, default=50, help='the frame interval between each sequence.')
@@ -1250,5 +1275,7 @@ if __name__ == '__main__':
     assert args.num_routing > 0
     args.colored = not args.no_colored
     print(args.colored, args.no_colored, args.debug, args.use_comet)
+    # NOTE: We should do this frequently to check
+    args.do_tsne_test_every = 2
 
     main(args)
