@@ -595,6 +595,8 @@ def run(find_counter=None):
         'config': 'resnet_backbone_movingmnist2_10ccgray',
         'use_presence_probs': True,
         'lambda_sparse_presence': 0.3,
+        'use_cuda_tsne': True,
+        'do_tsne_test_every': 2
     })
     var_arrays = {
         'fix_moving_mnist_center': [True, False],
