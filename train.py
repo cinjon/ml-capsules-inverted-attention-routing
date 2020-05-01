@@ -630,15 +630,18 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                     averages[key] = Averager()
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                 for k, v in averages.items()])
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+
+        loss.backward()
 
         total_norm = 0.
         for p in net.parameters():
-            param_norm = p.grad.data.norm(2)
-            total_norm += param_norm.item() ** 2
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
         averages['grad_norm'].add(total_norm ** (1. / 2))
 
-        loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
@@ -783,7 +786,8 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                         averages[key] = Averager()
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                     for k, v in averages.items()])
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
             if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -1253,7 +1257,7 @@ if __name__ == '__main__':
     # TSNE info
     parser.add_argument('--use_cuda_tsne', action='store_true',
                         help='whether to use cudaTSNE or TSNE from sklearn')
-    parser.add_argument('--tsne_batch_size', type=int, default=8,
+    parser.add_argument('--tsne_batch_size', type=int, default=72,
                         help='batch size for tsne dataloader')
 
     args = parser.parse_args()
@@ -1275,7 +1279,5 @@ if __name__ == '__main__':
     assert args.num_routing > 0
     args.colored = not args.no_colored
     print(args.colored, args.no_colored, args.debug, args.use_comet)
-    # NOTE: We should do this frequently to check
-    args.do_tsne_test_every = 2
 
     main(args)
