@@ -515,7 +515,7 @@ def run(find_counter=None):
     time = 6
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -554,6 +554,53 @@ def run(find_counter=None):
         'triangle_margin_lambda': [.3, 1.],
         'margin_gamma2': [.1, .3],
         'triangle_cos_lambda': [1., 3.]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Seeing what's up re 1 capsule.
+    # Counter: 257
+    job.update({
+        'name': '2020.04.30',
+        'criterion': 'triangle_margin2_angle_nce',
+        'dataset': 'MovingMNist2',
+        'do_tsne_test_every': 4,
+        'config': 'resnet_backbone_movingmnist2_gray1cc',
+    })
+    var_arrays = {
+        'fix_moving_mnist_center': [False, True],
+        'triangle_margin_lambda': [.3, 1.],
+        'margin_gamma2': [.1, .3],
+        'triangle_cos_lambda': [1., 3.]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Try to presence probs with a large margin_lambda and a small sparse_lambda
+    # Counter: 273
+    job.update({
+        'name': '2020.04.30',
+        'criterion': 'triangle_margin2_angle_nce',
+        'dataset': 'MovingMNist2',
+        'config': 'resnet_backbone_movingmnist2_10ccgray',
+        'use_presence_probs': True,
+        'lambda_sparse_presence': 0.3,
+    })
+    var_arrays = {
+        'fix_moving_mnist_center': [True, False],
+        'triangle_margin_lambda': [1., 10.],
+        'margin_gamma2': [.1, .3],
+        'triangle_cos_lambda': [1., 3.],
     }
     time = 10
     counter, _job = do_jobarray(
