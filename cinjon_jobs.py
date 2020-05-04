@@ -596,7 +596,8 @@ def run(find_counter=None):
         'use_presence_probs': True,
         'lambda_sparse_presence': 0.3,
         'use_cuda_tsne': True,
-        'do_tsne_test_every': 2
+        'do_tsne_test_every': 2,
+        'presence_loss_type': 'sigmoid_l1'
     })
     var_arrays = {
         'fix_moving_mnist_center': [True, False],
@@ -607,7 +608,133 @@ def run(find_counter=None):
     time = 10
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # Try to presence probs with a large margin_lambda and a small sparse_lambda
+    # Counter:  289
+    job.update({
+        'name': '2020.05.01',
+        'criterion': 'triangle_margin2_angle_nce',
+        'dataset': 'MovingMNist2',
+        'config': 'resnet_backbone_movingmnist2_10ccgray',
+        'use_presence_probs': True,
+        'lambda_sparse_presence': 0.3, # 0.3 doesn't learn
+        'use_cuda_tsne': True,
+        'do_tsne_test_every': 2,
+        'presence_loss_type': 'sigmoid_prior_sparsity'
+    })
+    var_arrays = {
+        'fix_moving_mnist_center': [True, False],
+        'triangle_margin_lambda': [1., 3.],
+        'margin_gamma2': [.1, .3],
+        'triangle_cos_lambda': [1., 3.],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Try to presence probs with a large margin_lambda and a small sparse_lambda
+    # Counter: 305
+    job.update({
+        'name': '2020.05.03',
+        'use_cuda_tsne': True,
+        'do_tsne_test_every': 1,
+        'fix_moving_mnist_center': True,
+        'fix_moving_mnist_angle': True,
+        'triangle_margin_lambda': 10.,
+        'margin_gamma2': 0.3,
+        'triangle_cos_lambda': 1.,
+        # 'no_use_hinge_loss': True,
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_prior_sparsity_example', 'sigmoid_prior_sparsity',
+            'sigmoid_within_entropy', 'sigmoid_within_between_entropy',
+            'softmax', 'softmax_nonoise'
+        ]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 311
+    job.update({
+        'name': '2020.05.03',
+        'triangle_margin_lambda': 1.,
+        'margin_gamma2': 0.3,
+        'triangle_cos_lambda': 1.,
+        'lr': 1e-4
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'softmax_within_between_entropy',
+            'sigmoid_prior_sparsity_example'
+        ]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we try it with just nce and presence. With that, we can increase
+    # the batch size. ... 
+    # Counter: 313
+    job.update({
+        'name': '2020.05.04',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'batch_size': 24,
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_prior_sparsity',
+            'sigmoid_prior_sparsity_example_between_entropy'
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # The above failed hard because it just made everything 0. We bring back
+    # the hinge loss.
+    # Counter: 315
+    job.update({
+        'name': '2020.05.04',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': False,
+        'num_output_classes': 10,
+        'batch_size': 24, # -_- ... this whole time I could have been using bigger BS
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_prior_sparsity',
+            'sigmoid_prior_sparsity_example_between_entropy'
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 

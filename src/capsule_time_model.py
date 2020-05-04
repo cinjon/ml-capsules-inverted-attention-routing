@@ -27,7 +27,8 @@ class CapsTimeModel(nn.Module):
                  num_frames=4,
                  is_discriminating_model=False, # Use True if original model.
                  use_presence_probs=False,
-                 presence_temperature=1.0
+                 presence_temperature=1.0,
+                 presence_loss_type='sigmoid_l1'
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -133,6 +134,8 @@ class CapsTimeModel(nn.Module):
                 object_dim=params['class_capsules']['object_dim'])
         )
 
+        self.num_class_capsules = params['class_capsules']['num_caps']
+
         self.is_discriminating_model = is_discriminating_model
         if is_discriminating_model:
             ## After Capsule
@@ -153,6 +156,7 @@ class CapsTimeModel(nn.Module):
 
         self.use_presence_probs = use_presence_probs
         self.presence_temperature = presence_temperature
+        self.presence_loss_type = presence_loss_type
         if use_presence_probs:
             input_dim = params['backbone']['output_dim']
             input_dim *= params['backbone']['out_img_size']**2
@@ -161,12 +165,29 @@ class CapsTimeModel(nn.Module):
 
     def get_presence(self, pre_caps):
         logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
-        logits *= self.presence_temperature
-        # NOTE: we add noise here in order to try and spike it.
-        rand_noise = torch.FloatTensor(logits.size()).uniform_(-2, 2).to(logits.device)
-        logits += rand_noise
-        logits = torch.sigmoid(logits)
-        # logits = F.softmax(logits, 1)
+        if self.presence_loss_type in [
+                'sigmoid_l1', 'sigmoid_prior_sparsity',
+                'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
+                'sigmoid_within_between_entropy',
+                'sigmoid_prior_sparsity_example_between_entropy'
+        ]:
+            logits *= self.presence_temperature
+            # NOTE: we add noise here in order to try and spike it.
+            rand_noise = torch.FloatTensor(logits.size()).uniform_(-2, 2).to(logits.device)
+            logits += rand_noise
+            logits = torch.sigmoid(logits)
+        elif self.presence_loss_type in [
+                'softmax', 'softmax_prior_sparsity_example',
+                'softmax_within_between_entropy'
+        ]:
+            logits *= self.presence_temperature
+            # NOTE: we add noise here in order to try and spike it.
+            rand_noise = torch.FloatTensor(logits.size()).uniform_(-2, 2).to(logits.device)
+            logits += rand_noise
+            logits = F.softmax(logits, 1)
+        elif self.presence_loss_type in ['softmax_nonoise']:
+            logits *= self.presence_temperature
+            logits = F.softmax(logits, 1)            
         return logits
 
     def get_ordering(self, x):
@@ -628,7 +649,8 @@ def get_triangle_loss(self, images, device, args):
     return loss, stats
 
 
-def get_triangle_nce_loss(model, images, device, args):
+def get_triangle_nce_loss(model, images, device, epoch, args,
+                          num_class_capsules=10):
     """Get linearizing loss AND the NCE loss.
 
     We optimize the NCE(f1_i, f3_j) so that the model learns to distinguish the
@@ -646,8 +668,9 @@ def get_triangle_nce_loss(model, images, device, args):
     because the easiest thing to do then is to make fk_i equal for all k. So we
     further also add a margin loss between (f1, f2) and (f1, f3).
     """
+    use_two_images = not args.use_hinge_loss and not args.use_angle_loss
     batch_size, num_images = images.shape[:2]
-
+    
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
     if args.use_presence_probs:
@@ -657,100 +680,226 @@ def get_triangle_nce_loss(model, images, device, args):
         pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
 
+    stats = {}
+
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
-    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
-    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
-
-    segment_13 = pose[:, 2, :] - pose[:, 0, :]
     segment_12 = pose[:, 1, :] - pose[:, 0, :]
-    segment_23 = pose[:, 2, :] - pose[:, 1, :]
+    stats['frame_12_sim'] = sim_12.item()
 
-    # Optimize the angle between (f1, f2) and (f1, f3).
-    cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+    if not use_two_images:
+        sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+        sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+        segment_13 = pose[:, 2, :] - pose[:, 0, :]
+        segment_23 = pose[:, 2, :] - pose[:, 1, :]
+        stats.update({
+            'frame_23_sim': sim_23.item(),
+            'frame_13_sim': sim_13.item(),
+            'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+        })
 
-    # Get the margin_loss on segment_12 and semgent_23.
-    margin_loss_23 = torch.norm(segment_23, dim=1)
-    margin_loss_23 = args.margin_gamma2 - margin_loss_23
-    margin_loss_23 = F.relu(margin_loss_23).sum()
-    margin_loss_12 = torch.norm(segment_12, dim=1)
-    margin_loss_12 = args.margin_gamma2 - margin_loss_12
-    margin_loss_12 = F.relu(margin_loss_12).sum()
+    loss = 0.
 
+    if args.use_angle_loss:
+        # Optimize the angle between (f1, f2) and (f1, f3).
+        cosine_sim_13_12 = F.cosine_similarity(segment_13, segment_12).mean()
+        loss += -cosine_sim_13_12 * args.triangle_cos_lambda
+        stats.update({
+            'cosine_sim_13_12': cosine_sim_13_12.item(),
+        })
+
+    if args.use_hinge_loss:
+        # Get the margin_loss on segment_12 and semgent_23.
+        margin_loss_23 = torch.norm(segment_23, dim=1)
+        margin_loss_23 = args.margin_gamma2 - margin_loss_23
+        margin_loss_23 = F.relu(margin_loss_23).sum()
+        margin_loss_12 = torch.norm(segment_12, dim=1)
+        margin_loss_12 = args.margin_gamma2 - margin_loss_12
+        margin_loss_12 = F.relu(margin_loss_12).sum()
+        loss += margin_loss_23 * args.triangle_margin_lambda
+        loss += margin_loss_12 * args.triangle_margin_lambda
+        stats.update({
+            'margin_loss_23': margin_loss_23.item(),
+            'margin_loss_12': margin_loss_12.item(),
+        })
+        stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+                
     # Get the NCE loss.
-    anchor = pose[:, 0, :]
-    other = pose[:, 2, :]
-    batch_size = anchor.size(0)
-    anchor_normalized = anchor / (anchor.norm(dim=2, keepdim=True) + 1e-6)
-    anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
-    other_normalized = other / (other.norm(dim=2, keepdim=True) + 1e-6)
-    other_normalized = other_normalized.view(1, batch_size, -1)
-    # similarity will be [bs, bs, num_capsules * num_dims] after this.
-    similarity = anchor_normalized * other_normalized
-    # now multiply by the temperature.
-    similarity *= args.nce_temperature
-    # and then sum to get the dot product (cosign similarity).
-    # this is [bs, bs]. the positive samples are on the diagonal.
-    similarity = similarity.sum(2)
-    # the diagonal has the positive similarity = log(exp(sim(x, y)))
-    identity = torch.eye(batch_size).to(similarity.device)
-    positive_similarity = (similarity * identity).sum(1)
+    if args.use_nce_loss:
+        anchor = pose[:, 0, :]
+        if use_two_images:
+            other = pose[:, 1, :]
+        else:
+            other = pose[:, 2, :]
 
-    # we get the total similarity by taking the logsumexp of similarity.
-    log_sum_total = torch.logsumexp(similarity, dim=1)
-    diff = positive_similarity - log_sum_total
-    nce = -diff.mean()
+        anchor_normalized = anchor / (anchor.norm(dim=2, keepdim=True) + 1e-6)
+        anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+        other_normalized = other / (other.norm(dim=2, keepdim=True) + 1e-6)
+        other_normalized = other_normalized.view(1, batch_size, -1)
+        # similarity will be [bs, bs, num_capsules * num_dims] after this.
+        similarity = anchor_normalized * other_normalized
+        # now multiply by the temperature.
+        similarity *= args.nce_temperature
+        # and then sum to get the dot product (cosign similarity).
+        # this is [bs, bs]. the positive samples are on the diagonal.
+        similarity = similarity.sum(2)
+        # the diagonal has the positive similarity = log(exp(sim(x, y)))
+        identity = torch.eye(batch_size).to(similarity.device)
+        positive_similarity = (similarity * identity).sum(1)
 
-    total_similarity = similarity.sum(1)
-    negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
-    positive_similarity = positive_similarity.mean().item()
+        # we get the total similarity by taking the logsumexp of similarity.
+        log_sum_total = torch.logsumexp(similarity, dim=1)
+        diff = positive_similarity - log_sum_total
+        nce = -diff.mean()
 
-    loss = -cosine_sim_13_12 * args.triangle_cos_lambda
-    loss += margin_loss_23 * args.triangle_margin_lambda
-    loss += margin_loss_12 * args.triangle_margin_lambda
-    loss += nce * args.nce_lambda
+        total_similarity = similarity.sum(1)
+        negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+        positive_similarity = positive_similarity.mean().item()
 
-    stats = {
-        'frame_12_sim': sim_12.item(),
-        'frame_23_sim': sim_23.item(),
-        'frame_13_sim': sim_13.item(),
-        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
-        'cosine_sim_13_12': cosine_sim_13_12.item(),
-        'margin_loss_23': margin_loss_23.item(),
-        'margin_loss_12': margin_loss_12.item(),
-        'pos_sim': positive_similarity,
-        'neg_sim': negative_similarity,
-        'nce': nce.item()
-    }
-    stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
+        loss += nce * args.nce_lambda
+        stats.update({
+            'pos_sim': positive_similarity,
+            'neg_sim': negative_similarity,
+            'nce': nce.item()            
+        })
 
     if args.use_presence_probs:
-        # In addition to the loss, which is the total sum, we also want to get
-        # stats that include the sum per capsule as well as how close are the
-        # sums across images of the same video.
-        presence_loss = presence_probs.sum(1).mean()
-        loss += presence_loss * args.lambda_sparse_presence
+        # In addition to the loss, we also want to get stats that include the
+        # sum per capsule as well as how close are the sums across images of
+        # the same video.
+
+        within_presence_norm = presence_probs.norm(dim=1, keepdim=True) + 1e-6
+        within_presence_normed = presence_probs / within_presence_norm + 1e-6
+        within_entropy = -within_presence_normed * \
+            torch.log(within_presence_normed) / np.log(2)
+        within_entropy = within_entropy.sum(1)
+
+        presence_probs_image = presence_probs.view(
+            batch_size, num_images, -1)
+        presence_probs_first = presence_probs_image[:, 0]
+        between_presence_norm = presence_probs_first.norm(dim=0, keepdim=True) + 1e-6
+        between_presence_normed = presence_probs_first / between_presence_norm + 1e-6
+        between_entropy = -between_presence_normed * \
+            torch.log(between_presence_normed) / np.log(2)
+        between_entropy = between_entropy.sum(0)
+        
+        within_entropy = within_entropy.mean()
+        between_entropy = between_entropy.mean()        
+        stats['within_entropy'] = within_entropy.item()
+        stats['between_entropy'] = between_entropy.item()
+
+        if args.presence_loss_type == 'sigmoid_l1':
+            # NOTE: Using this presence loss results in the model always using
+            # the same subset of capsules, regardless of input.
+            presence_loss = presence_probs.sum(1).mean()
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_example':
+            # Ok, yeah if we keep this going, then it gets everything good
+            # except the example_presence_loss only goes to 1.0. It ends up
+            # using two capsules instead of one. ... Maybe that's because it
+            # needs to, i.e. it doesn't have enough in just one capsule?
+            # That suggests increasng hte number of capsules.
+            # BUT it also collapses to just using the same two. So that's not
+            # useful. We still need something to push all the capsules to get
+            # used.
+
+            # The example_presence_loss says that the sum of probabilities
+            # should sum to the number of capsules / number of classes, which
+            # is 1 for MovingMNist with 10 capsules. With just this in place,
+            # the model could do [0.1]*10 but what we really want is more like
+            # [1.] + [0]*9.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity':
+            # This is doing the above example_presence_loss, but then also
+            # adding in a capsule_presence_loss, whose aim is to get each of
+            # the capsules to be present for at least one of every output_class.
+            # NOTE: The assumption there is that there is only one object in
+            # each image. This would have to be changed for adding in more classes.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_example_between_entropy':
+            # Here, we use the example sparsity in order to get this to use only
+            # a sparse number of capsules.
+            # We then maximize between_entropy in order to get this to put weight
+            # on all of the capsules at some point.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_sparse_presence
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_within_entropy':
+            # Here, we use entropy constraints. We normalize the probabilities
+            # and we try to minimize the within-example entropy. Minimizing the
+            # entropy would result in a sharp distribution.
+            # I suspect that this would enable the model to use few of the
+            # capsules and be fine. Let's see if that happens.
+            # So what this does is the model uses few of the capsules but then
+            # doesn't spread them around. Everyone just uses the capsules.
+            loss += within_entropy * args.lambda_sparse_presence
+        elif args.presence_loss_type == 'sigmoid_within_between_entropy':
+            # Here, we keep the within_exampel entropy, but we add the between
+            # example entropy. By maximizing the latter, we should end up with
+            # at least some mass placed on every capsule.
+            # This one has an issue where it's really volatile and otherwise
+            # seems to act as either everyone gets weight or we only do
+            # sigmoid_within_entropy.
+            # NOTE: We might not have enough in the batch for this ...
+            # TODO: I should redo these given the change to between_sparsity
+            # being that of using only image one.
+            loss += within_entropy * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_sparse_presence
+        elif args.presence_loss_type == 'softmax':
+            # This seems to result in everyone getting the same capsule. Let's
+            # see what happens if we let it go longer.
+            pass
+        elif args.presence_loss_type == 'softmax_nonoise':
+            # This also results in everyone getting the same capsule.
+            pass
+        elif args.presence_loss_type == 'softmax_within_between_entropy':
+            loss += within_entropy * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_sparse_presence
+        else:
+            raise
 
         mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
         std_per_capsule = [value.item() for value in presence_probs.std(0)]
 
-        presence_probs_image = presence_probs.view(
-            batch_size, num_images, -1)
         l2_probs_12 = torch.norm(
             presence_probs_image[:, 0, :] - presence_probs_image[:, 1, :],
             dim=1).mean()
-        l2_probs_13 = torch.norm(
-            presence_probs_image[:, 0, :] - presence_probs_image[:, 2, :],
-            dim=1).mean()
-        l2_probs_23 = torch.norm(
-            presence_probs_image[:, 1, :] - presence_probs_image[:, 2, :],
-            dim=1).mean()
-
         stats.update({
-            'presence_loss': presence_loss.item(),
             'l2_presence_probs_12': l2_probs_12.item(),
-            'l2_presence_probs_13': l2_probs_13.item(),
-            'l2_presence_probs_23': l2_probs_23.item(),
         })
+        if not use_two_images:
+            l2_probs_13 = torch.norm(
+                presence_probs_image[:, 0, :] - presence_probs_image[:, 2, :],
+                dim=1).mean()
+            l2_probs_23 = torch.norm(
+                presence_probs_image[:, 1, :] - presence_probs_image[:, 2, :],
+                dim=1).mean()
+            stats.update({
+                'l2_presence_probs_13': l2_probs_13.item(),
+                'l2_presence_probs_23': l2_probs_23.item(),
+            })
+
         for num, item in enumerate(mean_per_capsule):
             stats['capsule_prob_mean_%d' % num] = item
         for num, item in enumerate(std_per_capsule):

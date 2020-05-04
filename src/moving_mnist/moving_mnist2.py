@@ -15,7 +15,7 @@ class MovingMNIST(data.Dataset):
                  is_triangle_loss=False, is_reorder_loss=False,
                  num_digits=2, one_data_loop=False,
                  center_start=False, step_length=0.035,
-                 positive_ratio=0.5):
+                 positive_ratio=0.5, single_angle=False):
         self.root = root
         self.is_triangle_loss = is_triangle_loss
         self.is_reorder_loss = is_reorder_loss
@@ -28,7 +28,7 @@ class MovingMNIST(data.Dataset):
             is_triangle_loss=is_triangle_loss,
             is_reorder_loss=is_reorder_loss,
             num_digits=num_digits, step_length=step_length,
-            train=train, center_start=center_start,
+            train=train, center_start=center_start, single_angle=single_angle,
             positive_ratio=positive_ratio)
 
         if one_data_loop:
@@ -92,7 +92,7 @@ class _BouncingMNISTDataHandler(object):
                  output_image_size=64, is_triangle_loss=False,
                  is_reorder_loss=False, num_digits=2,
                  step_length=0.035, train=False, center_start=False,
-                 positive_ratio=0.5):
+                 single_angle=False, positive_ratio=0.5):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
@@ -112,6 +112,7 @@ class _BouncingMNISTDataHandler(object):
         self.is_reorder_loss = is_reorder_loss
         self.train = train
         self.center_start = center_start
+        self.single_angle = single_angle
         self.positive_ratio = positive_ratio
         if train:
             np.random.shuffle(self.indices_)
@@ -137,7 +138,10 @@ class _BouncingMNISTDataHandler(object):
             x = np.random.rand(num_digits)
 
         # Choose a random velocity.
-        theta = np.random.rand(num_digits) * 2 * np.pi
+        if self.single_angle:
+            theta = np.pi / 2.
+        else:
+            theta = np.random.rand(num_digits) * 2 * np.pi
         v_y = np.sin(theta)
         v_x = np.cos(theta)
 

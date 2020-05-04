@@ -42,7 +42,7 @@ from src.resnet_reorder_model import ReorderResNet
 
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
-             use_cuda_tsne=False, tsne_batch_size=8):
+             single_angle=False, use_cuda_tsne=False, tsne_batch_size=8):             
     # from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     # NOTE: Use this when it's the only thing on the GPU.
@@ -55,12 +55,14 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
         train_set = MovingMNist2(data_root, train=True, seq_len=1,
                                  image_size=64, colored=False, tiny=False,
                                  num_digits=1, one_data_loop=True,
-                                 center_start=center_start)
+                                 center_start=center_start,
+                                 single_angle=single_angle)
         test_set = MovingMNist2(data_root, train=False, seq_len=1,
                                 image_size=64, colored=False, tiny=False,
                                 num_digits=1, one_data_loop=True,
-                                center_start=center_start)
-        suffix = 'movmnist64fix%d' % int(center_start)
+                                center_start=center_start,
+                                single_angle=single_angle)
+        suffix = 'movmnist64.pfix%d.afix%d' % (int(center_start), int(single_angle))
     elif use_mnist:
         train_set = torchvision.datasets.MNIST(
             '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist', train=True,
@@ -220,6 +222,7 @@ def get_loaders(args):
                                  is_reorder_loss='reorder' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center,
+                                 single_angle=args.fix_moving_mnist_angle,
                                  step_length=args.step_length,
                                  positive_ratio=args.positive_ratio)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
@@ -228,6 +231,7 @@ def get_loaders(args):
                                 is_reorder_loss='reorder' in args.criterion,
                                 num_digits=args.num_mnist_digits,
                                 center_start=args.fix_moving_mnist_center,
+                                single_angle=args.fix_moving_mnist_angle,
                                 step_length=args.step_length,
                                 positive_ratio=args.positive_ratio)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
@@ -254,13 +258,15 @@ def get_loaders(args):
                                  one_data_loop=True,
                                  is_triangle_loss='triangle' in args.criterion,
                                  num_digits=args.num_mnist_digits,
-                                 center_start=args.fix_moving_mnist_center)
+                                 center_start=args.fix_moving_mnist_center,
+                                 single_angle=args.fix_moving_mnist_angle)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=1, image_size=64,
                                 colored=args.colored, tiny=False,
                                 one_data_loop=True,
                                 is_triangle_loss='triangle' in args.criterion,
                                 num_digits=args.num_mnist_digits,
-                                center_start=args.fix_moving_mnist_center)
+                                center_start=args.fix_moving_mnist_center,
+                                single_angle=args.fix_moving_mnist_angle)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -622,8 +628,14 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
         elif criterion in ['triangle_margin2_angle_nce']:
+            if not args.use_hinge_loss and not args.use_angle_loss:
+                if random.random() < 0.5:
+                    select_two = [0, 1]
+                else:
+                    select_two = [0, 2]
+                images = images[:, select_two]
             images = images.to(device)
-            loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, args)
+            loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, epoch, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -681,7 +693,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     return train_loss, train_acc, step
 
 
-def test(epoch, step, net, criterion, loader, args, best_negative_distance, device, store_dir=None, comet_exp=None):
+def test(epoch, step, net, criterion, loader, args, device, store_dir=None, comet_exp=None):
     net.eval()
     total_positive_distance = 0.
     total_negative_distance = 0.
@@ -778,8 +790,14 @@ def test(epoch, step, net, criterion, loader, args, best_negative_distance, devi
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
             elif criterion in ['triangle_margin2_angle_nce']:
+                if not args.use_hinge_loss and not args.use_angle_loss:
+                    if random.random() < 0.5:
+                        select_two = [0, 1]
+                    else:
+                        select_two = [0, 2]
+                    images = images[:, select_two]
                 images = images.to(device)
-                loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, args)
+                loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, epoch, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -856,7 +874,8 @@ def main(args):
             num_frames=num_frames,
             is_discriminating_model=is_discriminating_model,
             use_presence_probs=args.use_presence_probs,
-            presence_temperature=args.presence_temperature)
+            presence_temperature=args.presence_temperature,
+            presence_loss_type=args.presence_loss_type)
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -893,13 +912,11 @@ def main(args):
     net = net.to(device)
     net = torch.nn.DataParallel(net)
 
-    best_negative_distance = 0
     if args.resume_dir and not args.debug:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
         checkpoint = torch.load(os.path.join(args.resume_dir, 'ckpt.pth'))
         net.load_state_dict(checkpoint['net'])
-        best_negative_distance = checkpoint.get('best_negative_distance', 0)
         start_epoch = checkpoint['epoch']
 
     results = {
@@ -962,7 +979,7 @@ def main(args):
             scheduler.step()
 
         if epoch % 5 == 0:
-            test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir, comet_exp=comet_exp)
+            test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, device, store_dir=store_dir, comet_exp=comet_exp)
             # if test_acc is not None:
             #     print('Test Acc %.4f.' % test_acc)
             #     results['test_acc'].append(test_acc)
@@ -987,7 +1004,7 @@ def main(args):
            args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
            test_acc >= .975 and train_acc >= .975 and epoch > 0:
             print('\n***\nRunning affnist...')
-            affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
+            affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, device, store_dir=store_dir)
             results['affnist_acc'].append(affnist_acc)
 
         if comet_exp:
@@ -1011,6 +1028,7 @@ def main(args):
             run_tsne(
                 args.data_root, net, store_dir, epoch, use_moving_mnist=True,
                 comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
+                single_angle=args.fix_moving_mnist_angle,
                 use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
@@ -1202,6 +1220,27 @@ if __name__ == '__main__':
                         default=1.,
                         type=float,
                         help='the lambda on the presence L1.')
+    parser.add_argument(
+        '--presence_loss_type',
+        default='sigmoid_l1',
+        type=str,
+        help='the type of presence loss: sigmoid_l1, sigmoid_prior_sparsity')
+    parser.add_argument('--no_use_angle_loss',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the angle loss in triangle_nce')
+    parser.add_argument('--no_use_hinge_loss',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the hinge loss in triangle_nce')
+    parser.add_argument('--no_use_nce_loss',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the nce loss in triangle_nce')
+    parser.add_argument('--num_output_classes',
+                        default=10,
+                        type=float,
+                        help='the number of classes. this is a hack and dumb.')
 
     # VideoClip info
     parser.add_argument('--num_videoframes', type=int, default=100)
@@ -1249,6 +1288,8 @@ if __name__ == '__main__':
                         help='whether to not use colored mnist')
     parser.add_argument('--fix_moving_mnist_center', action='store_true',
                         help='whether to fix the center of moving mnist.')
+    parser.add_argument('--fix_moving_mnist_angle', action='store_true',
+                        help='whether to fix the angle of moving mnist.')
     parser.add_argument('--num_mnist_digits', type=int, default=2,
                         help='the number of digits to use in moving mnist.')
     parser.add_argument('--step_length', type=float, default=0.035,
@@ -1278,6 +1319,8 @@ if __name__ == '__main__':
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
     args.colored = not args.no_colored
-    print(args.colored, args.no_colored, args.debug, args.use_comet)
+    args.use_angle_loss = not args.no_use_angle_loss
+    args.use_hinge_loss = not args.no_use_hinge_loss
+    args.use_nce_loss = not args.no_use_nce_loss
 
     main(args)
