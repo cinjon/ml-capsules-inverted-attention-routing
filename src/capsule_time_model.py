@@ -158,13 +158,16 @@ class CapsTimeModel(nn.Module):
         self.presence_temperature = presence_temperature
         self.presence_loss_type = presence_loss_type
         if use_presence_probs:
-            input_dim = params['backbone']['output_dim']
-            input_dim *= params['backbone']['out_img_size']**2
-            output_dim = params['class_capsules']['num_caps']
-            self.presence_prob_head = nn.Linear(input_dim, output_dim)
+            if 'squash' not in presence_loss_type:
+                input_dim = params['backbone']['output_dim']
+                input_dim *= params['backbone']['out_img_size']**2
+                output_dim = params['class_capsules']['num_caps']
+                self.presence_prob_head = nn.Linear(input_dim, output_dim)
 
-    def get_presence(self, pre_caps):
-        logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
+    def get_presence(self, pre_caps, final_pose):
+        if 'squash' not in self.presence_loss_type:
+            logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
+
         if self.presence_loss_type in [
                 'sigmoid_l1', 'sigmoid_prior_sparsity',
                 'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
@@ -189,6 +192,18 @@ class CapsTimeModel(nn.Module):
         elif self.presence_loss_type in ['softmax_nonoise']:
             logits *= self.presence_temperature
             logits = F.softmax(logits, 1)            
+        elif 'squash' in self.presence_loss_type:
+            # final_pose is [bs * num_images, num_capsules, capsule_dim]
+            # We squash that here by doing
+            # v_j = ||s_j||^2 / (1 + ||s_j||^2) * s_j / ||s_j||
+            # where s_j is the capsule dims. At the end, we now have a squashed
+            # capsule dim, which we then take the l2_norm, which should be <=1.
+            pose_normalized = final_pose / final_pose.norm(dim=2, keepdim=True)
+            pose_norm_sq = final_pose.norm(dim=2, keepdim=True) ** 2
+            logits = pose_norm_sq / (1 + pose_norm_sq) * pose_normalized
+            logits = logits.norm(dim=2)
+        else:
+            raise
         return logits
 
     def get_ordering(self, x):
@@ -203,8 +218,7 @@ class CapsTimeModel(nn.Module):
         #  backbone['output_image_size], backbone['output_image_size']]
         # Lulz, this is 32x the input shape for mnist of [36, 1, 64, 64].
         c = self.pre_caps(x)
-        if self.use_presence_probs:
-            presence_probs = self.get_presence(c)
+        pre_caps_res = c
 
         ## Primary Capsule Layer (a single CNN)
         u = self.pc_layer(c)
@@ -285,6 +299,7 @@ class CapsTimeModel(nn.Module):
             out = self.mnist_classifier_head(out)
             return out, pose
         elif self.use_presence_probs:
+            presence_probs = self.get_presence(pre_caps_res, pose.clone())
             return pose, presence_probs
         else:
             # return pose, presence, object_
@@ -774,18 +789,23 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             batch_size, num_images, -1)
         presence_probs_first = presence_probs_image[:, 0]
 
-        presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-6
-        within_presence = presence_probs_first / presence_probs_sum1
+        presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
+        within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
         within_entropy = -within_presence * torch.log(within_presence) / np.log(2)            
         within_entropy = within_entropy.sum(1).mean()
 
-        presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-6
-        between_presence = presence_probs_first / presence_probs_sum0
+        presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-8
+        between_presence = presence_probs_first / presence_probs_sum0 + 1e-8
         between_entropy = -between_presence * torch.log(between_presence) / np.log(2)            
         between_entropy = between_entropy.sum(0).mean()
         
         stats['within_entropy'] = within_entropy.item()
         stats['between_entropy'] = between_entropy.item()
+        max_values, _ = torch.max(presence_probs_first, 1)
+        min_values, _ = torch.min(presence_probs_first, 1)
+        stats['mean_max_prob'] = max_values.mean().item()
+        stats['mean_min_prob'] = min_values.mean().item()
+        stats['mean_prob'] = presence_probs_first.mean().item()
 
         if args.presence_loss_type == 'sigmoid_l1':
             # NOTE: Using this presence loss results in the model always using
@@ -894,6 +914,30 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         elif args.presence_loss_type == 'softmax_within_between_entropy':
             loss += within_entropy * args.lambda_within_entropy
             loss -= between_entropy * args.lambda_between_entropy
+        elif args.presence_loss_type == 'squash_prior_sparsity':
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'squash_within_between_entropy':
+            loss += within_entropy * args.lambda_within_entropy
+            loss -= between_entropy * args.lambda_between_entropy
+        elif args.presence_loss_type == 'squash_example_between':
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_between_entropy
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
         else:
             raise
 

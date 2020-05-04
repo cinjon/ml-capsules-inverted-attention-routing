@@ -725,10 +725,99 @@ def run(find_counter=None):
         'num_output_classes': 10,
         'batch_size': 24, # -_- ... this whole time I could have been using bigger BS
     })
+    # When it collapses below, the result is that everything goes to zero vector
+    # and the gradient becomes 0.0 as well. Seems like the common factor in
+    # that happening is the capsule_presence_loss, which is what pushes the
+    # model to spread weight amongst the capsules. The between entropy is also
+    # supposed to do that though.
     var_arrays = {        
         'presence_loss_type': [
-            'sigmoid_prior_sparsity',
-            'sigmoid_prior_sparsity_example_between_entropy'
+            'sigmoid_prior_sparsity', # <-- Collapsed with 0 within and between entropy. It's really hard.
+            'sigmoid_prior_sparsity_example_between_entropy',
+            'sigmoid_prior_sparsity_between_entropy', # <-- Also collapsed.
+            'sigmoid_within_between_entropy'
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # On the dgx ... try upping the lambda between entry and the lr.
+    # When we upped the LR to 3e-4, it collapsed, err, but we weren't actually
+    # using num_gpus=4.
+    # NOTE: Wth the lambda_between_entropy at 3.0, the model gets stuck trying
+    # to reduce nce all the way to 0 but with every capsule prob stuck at 1.0
+    # Counter: 319
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': False,
+        'num_output_classes': 10,
+        'lambda_between_entropy': 3.0,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': 3,
+        'batch_size': 30 # On the dgx.
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_within_between_entropy',
+        ],
+    }
+    num_gpus = 4
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we are trying the squashed approach to getting the logits.
+    # We turn off everything but the nce.
+    # Counter: 320
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lambda_between_entropy': 3.0,
+        'lambda_within_entropy': 3.0, 
+        'lr': 3e-4,
+        'num_workers': 4,
+        'num_gpus': 1,
+        'batch_size': 24, # on the regular.
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'squash_prior_sparsity', 'squash_within_between_entropy'
+        ],
+    }
+    num_gpus = 1
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # Same re using squash to get at the logits. Using dgx with higher LR.
+    # We turn off everything but the nce.
+    # Counter: 322
+    num_gpus = 3
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lr': 3e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 24,
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'squash_example_between',
         ],
     }
     time = 10

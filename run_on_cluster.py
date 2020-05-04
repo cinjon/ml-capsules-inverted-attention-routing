@@ -18,9 +18,9 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
     slurm_logs = os.path.join(directory, 'slurm_logs')
     slurm_scripts = os.path.join(directory, 'slurm_scripts')
 
-    job['num_gpus'] = num_gpus
+    if 'num_gpus' not in job:
+        job['num_gpus'] = num_gpus
     job['time'] = time
-    job['batch_size'] *= num_gpus
     job['num_workers'] = min(int(2.5 * num_gpus), num_cpus - num_gpus)
     jobarray = []
 

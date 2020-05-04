@@ -22,6 +22,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 from torch.utils.data.sampler import SubsetRandomSampler, SequentialSampler
+import torch.distributed as dist
 import torchvision
 import torchvision.transforms as transforms
 import torch.multiprocessing as mp
@@ -44,7 +45,8 @@ from src.resnet_reorder_model import ReorderResNet
 
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
-             single_angle=False, use_cuda_tsne=False, tsne_batch_size=8):             
+             single_angle=False, use_cuda_tsne=False, tsne_batch_size=8,
+             num_workers=2):
     # from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     # NOTE: Use this when it's the only thing on the GPU.
@@ -89,11 +91,11 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
     train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                batch_size=tsne_batch_size,
                                                shuffle=False,
-                                               num_workers=2)
+                                               num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(dataset=test_set,
                                               batch_size=tsne_batch_size,
                                               shuffle=False,
-                                              num_workers=2)
+                                              num_workers=num_workers)
 
     orig_images = []
     model_poses = []
@@ -200,7 +202,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def get_loaders(args):
+def get_loaders(args, rank=0):
     affnist_test_loader = None
 
     if args.dataset == 'MovingMNist':
@@ -236,14 +238,6 @@ def get_loaders(args):
                                 single_angle=args.fix_moving_mnist_angle,
                                 step_length=args.step_length,
                                 positive_ratio=args.positive_ratio)
-        train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers)
-        test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                                  batch_size=args.batch_size,
-                                                  shuffle=False,
-                                                  num_workers=args.num_workers)
         # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
             args.affnist_root, train=False, subset=args.affnist_subset,
@@ -252,8 +246,34 @@ def get_loaders(args):
                 transforms.ToTensor(),
             ])
         )
+        if args.num_gpus == 1:
+            train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                       batch_size=args.batch_size,
+                                                       shuffle=True,
+                                                       num_workers=args.num_workers)
+        else:
+            print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
+            train_sampler = torch.utils.data.distributed.DistributedSampler(
+    	        train_set,
+    	        num_replicas=args.num_gpus,
+    	        rank=rank
+            )
+            train_loader = torch.utils.data.DataLoader(
+    	        dataset=train_set,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=1,
+                pin_memory=True,
+                sampler=train_sampler,
+                drop_last=True
+            )
+
+        test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                                  batch_size=args.batch_size,
+                                                  shuffle=False,
+                                                  num_workers=args.num_workers)
         affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=args.batch_size, shuffle=False)
+            affnist_test_set, batch_size=args.batch_size, shuffle=False)            
     elif args.dataset == 'MovingMNist2.img1':
         train_set = MovingMNist2(args.data_root, train=True, seq_len=1, image_size=64,
                                  colored=args.colored, tiny=False,
@@ -532,9 +552,6 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         with comet_exp.train():
             comet_exp.log_current_epoch(epoch)
 
-    total_positive_distance = 0.
-    total_negative_distance = 0.
-
     averages = {
         'loss': Averager(),
         'grad_norm': Averager()
@@ -543,23 +560,19 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     t = time.time()
     optimizer.zero_grad()
     for batch_idx, (images, labels) in enumerate(loader):
-        # images = images.to(device)
-
         if criterion == 'triplet':
             # NOTE: Zeping.
-            images = images.to(device)
+            images = images.cuda(device)
             loss, stats = capsule_time_model.get_triplet_loss(net, images)
             averages['loss'].add(loss.item())
             positive_distance = stats['positive_distance']
             negative_distance = stats['negative_distance']
-            total_positive_distance += positive_distance
-            total_negative_distance += negative_distance
             extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
                 positive_distance, negative_distance
             )
         elif criterion == 'bce':
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.cuda(device)
+            labels = labels.cuda(device)
             loss, stats = capsule_time_model.get_bce_loss(net, images, labels)
             averages['loss'].add(loss.item())
             true_positive_total += stats['true_pos']
@@ -569,7 +582,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 true_positive_total, num_targets_total
             )
         elif criterion == 'nce':
-            images = images.to(device)
+            images = images.cuda(device)
             loss, stats = capsule_time_model.get_nce_loss(net, images, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -580,12 +593,12 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages['pos_sim'].item(), averages['neg_sim'].item()
             )
         elif criterion == 'xent':
-            images = images.to(device)
+            images = images.cuda(device)
             batch_size, num_images = images.shape[:2]
             # Change view so that we can put everything through the model at once.
             images = images.view(batch_size * num_images, *images.shape[2:])
             labels = labels.squeeze()
-            labels = labels.to(device)
+            labels = labels.cuda(device)
             loss, stats = capsule_time_model.get_xent_loss(net, images, labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -598,8 +611,8 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         elif criterion == 'reorder':
             if images is None and labels is None:
                 continue
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.cuda(device)
+            labels = labels.cuda(device)
             loss, stats = capsule_time_model.get_reorder_loss(net, images, device, args, labels=labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -620,7 +633,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                                  for k, v in averages.items()])
         elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
                            'triangle_margin2', 'triangle_margin2_angle']:
-            images = images.to(device)
+            images = images.cuda(device)
             loss, stats = capsule_time_model.get_triangle_loss(net, images, device, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -636,7 +649,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 else:
                     select_two = [0, 2]
                 images = images[:, select_two]
-            images = images.to(device)
+            images = images.cuda(device)
             loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, epoch, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -659,35 +672,36 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
         optimizer.step()
         optimizer.zero_grad()
 
-        step += len(images)
-        del images
-        torch.cuda.empty_cache()
+        step += len(images) * args.num_gpus
+        if comet_exp is not None:
+            del images
+            torch.cuda.empty_cache()
 
-        if batch_idx % 25 == 0 and batch_idx > 0:
-            log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-            print(log_text.format(epoch+1, batch_idx, len(loader),
-                                  time.time() - t, averages['loss'].item())
-            )
-            t = time.time()
-            if comet_exp:
+            if batch_idx % 25 == 0 and batch_idx > 0:
+                log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+                print(log_text.format(epoch+1, batch_idx, len(loader),
+                                      time.time() - t, averages['loss'].item())
+                )
+                t = time.time()
                 with comet_exp.train():
                     epoch_avgs = {k: v.item() for k, v in averages.items()}
                     comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
-
+                    
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item() if 'accuracy' in averages else None
 
-    for key, value in stats.items():
-        if key not in averages:
-            averages[key] = Averager()
-        averages[key].add(value)
-    extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                         for k, v in averages.items()])
-    log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-    print(log_text.format(epoch+1, batch_idx, len(loader),
-                          time.time() - t, averages['loss'].item()))
-    t = time.time()
-    if comet_exp:
+    if comet_exp is not None:
+        for key, value in stats.items():
+            if key not in averages:
+                averages[key] = Averager()
+            averages[key].add(value)
+        extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                             for k, v in averages.items()])
+        log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+        print(log_text.format(epoch+1, batch_idx, len(loader),
+                              time.time() - t, averages['loss'].item()))
+
+        t = time.time()
         with comet_exp.train():
             epoch_avgs = {k: v.item() for k, v in averages.items()}
             comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
@@ -697,8 +711,6 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
 
 def test(epoch, step, net, criterion, loader, args, device, store_dir=None, comet_exp=None):
     net.eval()
-    total_positive_distance = 0.
-    total_negative_distance = 0.
 
     averages = {
         'loss': Averager()
@@ -710,19 +722,17 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
 
             if criterion == 'triplet':
                 # NOTE: Zeping.
-                images = images.to(device)
+                images = images.cuda(device)
                 loss, stats = capsule_time_model.get_triplet_loss(net, images)
                 averages['loss'].add(loss.item())
                 positive_distance = stats['positive_distance']
                 negative_distance = stats['negative_distance']
-                total_positive_distance += positive_distance
-                total_negative_distance += negative_distance
                 extra_s = 'Pos distance: {:.5f} | Neg distance: {:.5f}'.format(
                     positive_distance, negative_distance
                 )
             elif criterion == 'bce':
-                images = images.to(device)
-                labels = labels.to(device)
+                images = images.cuda(device)
+                labels = labels.cuda(device)
                 loss, stats = capsule_time_model.get_bce_loss(net, images, labels)
                 averages['loss'].add(loss.item())
                 true_positive_total += stats['true_pos']
@@ -732,7 +742,7 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                     true_positive_total, num_targets_total
                 )
             elif criterion == 'nce':
-                images = images.to(device)
+                images = images.cuda(device)
                 loss, stats = capsule_time_model.get_nce_loss(net, images, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -743,12 +753,12 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                     averages['pos_sim'].item(), averages['neg_sim'].item()
                 )
             elif criterion == 'xent':
-                images = images.to(device)
+                images = images.cuda(device)
                 batch_size, num_images = images.shape[:2]
                 # Change view so that we can put everything through the model at once.
                 images = images.view(batch_size * num_images, *images.shape[2:])
                 labels = labels.squeeze()
-                labels = labels.to(device)
+                labels = labels.cuda(device)
                 loss, stats = capsule_time_model.get_xent_loss(net, images, labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -761,8 +771,8 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
             elif criterion == 'reorder':
                 if images is None and labels is None:
                     continue
-                images = images.to(device)
-                labels = labels.to(device)
+                images = images.cuda(device)
+                labels = labels.cuda(device)
                 loss, stats = capsule_time_model.get_reorder_loss(net, images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -782,7 +792,7 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                                      for k, v in averages.items()])
             elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
                                'triangle_margin2', 'triangle_margin2_angle']:
-                images = images.to(device)
+                images = images.cuda(device)
                 loss, stats = capsule_time_model.get_triangle_loss(net, images, device, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -798,7 +808,7 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                     else:
                         select_two = [0, 2]
                     images = images[:, select_two]
-                images = images.to(device)
+                images = images.cuda(device)
                 loss, stats = capsule_time_model.get_triangle_nce_loss(net, images, device, epoch, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -809,29 +819,29 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
 
-            if batch_idx % 100 == 0 and batch_idx > 0:
+            if comet_exp and batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
                 print(log_text.format(epoch + 1, batch_idx, len(loader),
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
 
-        del images
-        torch.cuda.empty_cache()
-
-        for key, value in stats.items():
-            if key not in averages:
-                averages[key] = Averager()
-            averages[key].add(value)
-        extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                             for k, v in averages.items()])
-        log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-        print(log_text.format(epoch + 1, batch_idx, len(loader),
-                              time.time() - t, averages['loss'].item())
-        )
-
-        test_loss = averages['loss'].item()
         if comet_exp:
+            del images
+            torch.cuda.empty_cache()
+
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items()])
+            log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+            print(log_text.format(epoch + 1, batch_idx, len(loader),
+                                  time.time() - t, averages['loss'].item())
+            )
+
+            test_loss = averages['loss'].item()
             with comet_exp.test():
                 epoch_avgs = {k: v.item() for k, v in averages.items()}
                 comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
@@ -840,24 +850,19 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
     return test_loss, test_acc
 
 
-
-def main(args):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+def main(gpu, args, port=12355):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = str(port)
+    dist.init_process_group(backend='nccl', rank=gpu, world_size=args.num_gpus)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if device == 'cuda':
-        torch.cuda.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
 
     config = getattr(configs, args.config).config
     print(config)
 
-    train_loader, test_loader, affnist_test_loader = get_loaders(args)
+    train_loader, test_loader, affnist_test_loader = get_loaders(args, rank=gpu)
 
     print('==> Building model..')
     num_frames = 4 if args.criterion == 'reorder2' else 3
@@ -911,9 +916,11 @@ def main(args):
     if not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
-    net = net.to(device)
-    net = torch.nn.DataParallel(net)
+    torch.cuda.set_device(gpu)
+    net.cuda(gpu)
+    net = DDP(net, device_ids=[gpu], find_unused_parameters=True)
 
+    start_epoch = 0  # start from epoch 0 or last checkpoint epoch
     if args.resume_dir and not args.debug:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -942,7 +949,7 @@ def main(args):
 
     print(args.dataset)
 
-    if args.use_comet:
+    if args.use_comet and gpu == 0:
         comet_exp = CometExperiment(api_key="hIXq6lDzWzz24zgKv7RYz6blo",
                                     project_name="capsules",
                                     workspace="cinjon",
@@ -958,6 +965,7 @@ def main(args):
     else:
         comet_exp = None
 
+    torch.autograd.set_detect_anomaly(True)
 
     # test_loss, test_acc = test(0, net, args.criterion, test_loader, args, best_negative_distance, device, store_dir=store_dir)
     # print('Before staarting Test Acc: ', test_acc)
@@ -967,6 +975,7 @@ def main(args):
     step = 0
     last_test_loss = 1e8
     last_saved_epoch = 0
+    device = gpu
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
@@ -980,7 +989,7 @@ def main(args):
         if scheduler:
             scheduler.step()
 
-        if epoch % 5 == 0:
+        if epoch % 5 == 0 and gpu == 0:
             test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, device, store_dir=store_dir, comet_exp=comet_exp)
             # if test_acc is not None:
             #     print('Test Acc %.4f.' % test_acc)
@@ -1002,7 +1011,7 @@ def main(args):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-        if 'triangle' not in args.criterion and \
+        if gpu == 0 and 'triangle' not in args.criterion and \
            args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
            test_acc >= .975 and train_acc >= .975 and epoch > 0:
             print('\n***\nRunning affnist...')
@@ -1012,7 +1021,7 @@ def main(args):
         if comet_exp:
             comet_exp.log_epoch_end(epoch)
 
-        if args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
+        if gpu == 0 and args.do_mnist_test_every and epoch % args.do_mnist_test_every == 0 and epoch > args.do_mnist_test_after:
             print('\n***\nStarting MNist Test (%d)\n***' % epoch)
             linpred_train.run_ssl_model(
                 epoch, net, args.data_root, args.affnist_root, comet_exp,
@@ -1022,6 +1031,7 @@ def main(args):
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
         if all([
+                gpu == 0,
                 args.do_tsne_test_every is not None,
                 epoch % args.do_tsne_test_every == 0,
                 epoch > args.do_tsne_test_after
@@ -1034,7 +1044,7 @@ def main(args):
                 use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
-        if not args.debug:
+        if gpu == 0 and not args.debug:
             with open(store_file, 'wb') as f:
                 pickle.dump(results, f)
 
@@ -1333,7 +1343,7 @@ if __name__ == '__main__':
     args.use_hinge_loss = not args.no_use_hinge_loss
     args.use_nce_loss = not args.no_use_nce_loss
 
-    main(args)
+    # main(args)
 
-    # default_port = random.randint(10000, 19000)
-    # mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 
+    default_port = random.randint(10000, 19000)
+    mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 
