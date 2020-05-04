@@ -169,7 +169,8 @@ class CapsTimeModel(nn.Module):
                 'sigmoid_l1', 'sigmoid_prior_sparsity',
                 'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
                 'sigmoid_within_between_entropy',
-                'sigmoid_prior_sparsity_example_between_entropy'
+                'sigmoid_prior_sparsity_example_between_entropy',
+                'sigmoid_prior_sparsity_between_entropy',
         ]:
             logits *= self.presence_temperature
             # NOTE: we add noise here in order to try and spike it.
@@ -767,23 +768,22 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         # sum per capsule as well as how close are the sums across images of
         # the same video.
 
-        within_presence_norm = presence_probs.norm(dim=1, keepdim=True) + 1e-6
-        within_presence_normed = presence_probs / within_presence_norm + 1e-6
-        within_entropy = -within_presence_normed * \
-            torch.log(within_presence_normed) / np.log(2)
-        within_entropy = within_entropy.sum(1)
-
+        # NOTE: Omgahd, none of these have been correct as of May 4th. Ugh.
+        # The below is fixed now. It was using norm instead of sum before.
         presence_probs_image = presence_probs.view(
             batch_size, num_images, -1)
         presence_probs_first = presence_probs_image[:, 0]
-        between_presence_norm = presence_probs_first.norm(dim=0, keepdim=True) + 1e-6
-        between_presence_normed = presence_probs_first / between_presence_norm + 1e-6
-        between_entropy = -between_presence_normed * \
-            torch.log(between_presence_normed) / np.log(2)
-        between_entropy = between_entropy.sum(0)
+
+        presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-6
+        within_presence = presence_probs_first / presence_probs_sum1
+        within_entropy = -within_presence * torch.log(within_presence) / np.log(2)            
+        within_entropy = within_entropy.sum(1).mean()
+
+        presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-6
+        between_presence = presence_probs_first / presence_probs_sum0
+        between_entropy = -between_presence * torch.log(between_presence) / np.log(2)            
+        between_entropy = between_entropy.sum(0).mean()
         
-        within_entropy = within_entropy.mean()
-        between_entropy = between_entropy.mean()        
         stats['within_entropy'] = within_entropy.item()
         stats['between_entropy'] = between_entropy.item()
 
@@ -832,6 +832,24 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             stats['capsule_presence_loss'] = capsule_presence_loss.item()
             stats['example_presence_loss'] = example_presence_loss.item()
             stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_between_entropy':
+            # This is doing the above example_presence_loss, but then also
+            # adding in a capsule_presence_loss, whose aim is to get each of
+            # the capsules to be present for at least one of every output_class.
+            # NOTE: The assumption there is that there is only one object in
+            # each image. This would have to be changed for adding in more classes.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_between_entropy
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
         elif args.presence_loss_type == 'sigmoid_prior_sparsity_example_between_entropy':
             # Here, we use the example sparsity in order to get this to use only
             # a sparse number of capsules.
@@ -842,7 +860,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
             presence_loss = example_presence_loss
             loss += presence_loss * args.lambda_sparse_presence
-            loss -= between_entropy * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_between_entropy
             stats['example_presence_loss'] = example_presence_loss.item()
             stats['presence_loss'] = presence_loss.item()
         elif args.presence_loss_type == 'sigmoid_within_entropy':
@@ -853,7 +871,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # capsules and be fine. Let's see if that happens.
             # So what this does is the model uses few of the capsules but then
             # doesn't spread them around. Everyone just uses the capsules.
-            loss += within_entropy * args.lambda_sparse_presence
+            loss += within_entropy * args.lambda_within_entropy
         elif args.presence_loss_type == 'sigmoid_within_between_entropy':
             # Here, we keep the within_exampel entropy, but we add the between
             # example entropy. By maximizing the latter, we should end up with
@@ -864,8 +882,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # NOTE: We might not have enough in the batch for this ...
             # TODO: I should redo these given the change to between_sparsity
             # being that of using only image one.
-            loss += within_entropy * args.lambda_sparse_presence
-            loss -= between_entropy * args.lambda_sparse_presence
+            loss += within_entropy * args.lambda_within_entropy
+            loss -= between_entropy * args.lambda_between_entropy
         elif args.presence_loss_type == 'softmax':
             # This seems to result in everyone getting the same capsule. Let's
             # see what happens if we let it go longer.
@@ -874,8 +892,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # This also results in everyone getting the same capsule.
             pass
         elif args.presence_loss_type == 'softmax_within_between_entropy':
-            loss += within_entropy * args.lambda_sparse_presence
-            loss -= between_entropy * args.lambda_sparse_presence
+            loss += within_entropy * args.lambda_within_entropy
+            loss -= between_entropy * args.lambda_between_entropy
         else:
             raise
 

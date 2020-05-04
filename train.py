@@ -24,6 +24,8 @@ import torch.backends.cudnn as cudnn
 from torch.utils.data.sampler import SubsetRandomSampler, SequentialSampler
 import torchvision
 import torchvision.transforms as transforms
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import configs
 import linpred_train
@@ -1188,6 +1190,14 @@ if __name__ == '__main__':
                         default=1.,
                         type=float,
                         help='the lambda on the presence L1.')
+    parser.add_argument('--lambda_between_entropy',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the between entropy.')
+    parser.add_argument('--lambda_within_entropy',
+                        default=1.,
+                        type=float,
+                        help='the lambda on the within entropy.')
 
     # Triangle
     parser.add_argument('--triangle_lambda',
@@ -1324,3 +1334,6 @@ if __name__ == '__main__':
     args.use_nce_loss = not args.no_use_nce_loss
 
     main(args)
+
+    # default_port = random.randint(10000, 19000)
+    # mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 
