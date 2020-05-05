@@ -28,7 +28,8 @@ class CapsTimeModel(nn.Module):
                  is_discriminating_model=False, # Use True if original model.
                  use_presence_probs=False,
                  presence_temperature=1.0,
-                 presence_loss_type='sigmoid_l1'
+                 presence_loss_type='sigmoid_l1',
+                 do_capsule_computation=True
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -55,6 +56,27 @@ class CapsTimeModel(nn.Module):
                 params['backbone']['input_dim'],
                 params['backbone']['output_dim'],
                 params['backbone']['stride'])
+
+        self.num_class_capsules = params['class_capsules']['num_caps']
+        self.is_discriminating_model = is_discriminating_model
+        self.use_presence_probs = use_presence_probs
+        self.presence_temperature = presence_temperature
+        self.presence_loss_type = presence_loss_type
+        if use_presence_probs:
+            if 'squash' not in presence_loss_type:
+                input_dim = params['backbone']['output_dim']
+                input_dim *= params['backbone']['out_img_size']**2
+                output_dim = params['class_capsules']['num_caps']
+                self.presence_prob_head = nn.Linear(input_dim, output_dim)
+
+        self.do_capsule_computation = do_capsule_computation
+        if not do_capsule_computation:
+            self.dummy_pose = torch.randn(
+                params['class_capsules']['num_caps'],
+                params['class_capsules']['caps_dim'],
+                dtype=torch.float
+            )
+            return
 
         ## Primary Capsule Layer (a single CNN)
         self.pc_layer = nn.Conv2d(in_channels=params['primary_capsules']['input_dim'],
@@ -134,9 +156,6 @@ class CapsTimeModel(nn.Module):
                 object_dim=params['class_capsules']['object_dim'])
         )
 
-        self.num_class_capsules = params['class_capsules']['num_caps']
-
-        self.is_discriminating_model = is_discriminating_model
         if is_discriminating_model:
             ## After Capsule
             # fixed classifier for all class capsules
@@ -153,16 +172,6 @@ class CapsTimeModel(nn.Module):
         if mnist_classifier_head:
             num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
             self.mnist_classifier_head = nn.Linear(num_params, 10)
-
-        self.use_presence_probs = use_presence_probs
-        self.presence_temperature = presence_temperature
-        self.presence_loss_type = presence_loss_type
-        if use_presence_probs:
-            if 'squash' not in presence_loss_type:
-                input_dim = params['backbone']['output_dim']
-                input_dim *= params['backbone']['out_img_size']**2
-                output_dim = params['class_capsules']['num_caps']
-                self.presence_prob_head = nn.Linear(input_dim, output_dim)
 
     def get_presence(self, pre_caps, final_pose):
         if 'squash' not in self.presence_loss_type:
@@ -184,6 +193,12 @@ class CapsTimeModel(nn.Module):
             # NOTE: we add noise here in order to try and spike it.
             rand_noise = torch.FloatTensor(logits.size()).uniform_(-2, 2).to(logits.device)
             logits += rand_noise
+            logits = torch.sigmoid(logits)
+        elif self.presence_loss_type in [
+                'sigmoid_prior_sparsity_fix_nospike', 
+        ]:
+            # NOTE: loook ma no noise!
+            logits *= self.presence_temperature
             logits = torch.sigmoid(logits)
         elif self.presence_loss_type in [
                 'softmax', 'softmax_prior_sparsity_example',
@@ -232,69 +247,64 @@ class CapsTimeModel(nn.Module):
         c = self.pre_caps(x)
         pre_caps_res = c
 
-        ## Primary Capsule Layer (a single CNN)
-        u = self.pc_layer(c)
-        # dmm u.shape: [64, 1024, 8, 8]
-        u = u.permute(0, 2, 3, 1)
-        u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
-                   self.pc_num_caps, self.pc_caps_dim) # 100, 14, 14, 32, 16
-        u = u.permute(0, 3, 1, 2, 4)  # 100, 32, 14, 14, 16
-        init_capsule_value = self.nonlinear_act(u)  #capsule_utils.squash(u)
+        if self.do_capsule_computation:
+            ## Primary Capsule Layer (a single CNN)
+            u = self.pc_layer(c)
+            # dmm u.shape: [64, 1024, 8, 8]
+            u = u.permute(0, 2, 3, 1)
+            u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
+                       self.pc_num_caps, self.pc_caps_dim) # 100, 14, 14, 32, 16
+            u = u.permute(0, 3, 1, 2, 4)  # 100, 32, 14, 14, 16
+            init_capsule_value = self.nonlinear_act(u)  #capsule_utils.squash(u)
 
-        ## Main Capsule Layers
-        # concurrent routing
-        if not self.sequential_routing:
-            # first iteration
-            # perform initilialization for the capsule values as single forward passing
-            capsule_values, _val = [init_capsule_value], init_capsule_value
-            for i in range(len(self.capsule_layers)):
-                _val = self.capsule_layers[i].forward(_val, 0)
-                # dmm:
-                # capsule 0 _val.shape: [64, 16, 6, 6, 64]
-                # capsule 1 _val.shape: [64, 10, 64]
-                # capsule 2 _val.shape: [64, 10, 64]
-                # get the capsule value for next layer
-                capsule_values.append(_val)
-
-            # second to t iterations
-            # perform the routing between capsule layers
-            for n in range(self.num_routing - 1):
-                _capsule_values = [init_capsule_value]
+            ## Main Capsule Layers
+            # concurrent routing
+            if not self.sequential_routing:
+                # first iteration
+                # perform initilialization for the capsule values as single forward passing
+                capsule_values, _val = [init_capsule_value], init_capsule_value
                 for i in range(len(self.capsule_layers)):
-                    _val = self.capsule_layers[i].forward(
-                        capsule_values[i], n, capsule_values[i + 1])
+                    _val = self.capsule_layers[i].forward(_val, 0)
                     # dmm:
                     # capsule 0 _val.shape: [64, 16, 6, 6, 64]
                     # capsule 1 _val.shape: [64, 10, 64]
                     # capsule 2 _val.shape: [64, 10, 64]
-                    _capsule_values.append(_val)
-                capsule_values = _capsule_values
-        # sequential routing
-        else:
-            capsule_values, _val = [init_capsule_value], init_capsule_value
-            for i in range(len(self.capsule_layers)):
-                # first iteration
-                __val = self.capsule_layers[i].forward(_val, 0)
+                    # get the capsule value for next layer
+                    capsule_values.append(_val)
+
                 # second to t iterations
                 # perform the routing between capsule layers
                 for n in range(self.num_routing - 1):
-                    __val = self.capsule_layers[i].forward(_val, n, __val)
-                _val = __val
-                capsule_values.append(_val)
+                    _capsule_values = [init_capsule_value]
+                    for i in range(len(self.capsule_layers)):
+                        _val = self.capsule_layers[i].forward(
+                            capsule_values[i], n, capsule_values[i + 1])
+                        # dmm:
+                        # capsule 0 _val.shape: [64, 16, 6, 6, 64]
+                        # capsule 1 _val.shape: [64, 10, 64]
+                        # capsule 2 _val.shape: [64, 10, 64]
+                        _capsule_values.append(_val)
+                    capsule_values = _capsule_values
+            # sequential routing
+            else:
+                capsule_values, _val = [init_capsule_value], init_capsule_value
+                for i in range(len(self.capsule_layers)):
+                    # first iteration
+                    __val = self.capsule_layers[i].forward(_val, 0)
+                    # second to t iterations
+                    # perform the routing between capsule layers
+                    for n in range(self.num_routing - 1):
+                        __val = self.capsule_layers[i].forward(_val, n, __val)
+                    _val = __val
+                    capsule_values.append(_val)
 
-        ## After Capsule
-        out = capsule_values[-1]
+            ## After Capsule
+            out = capsule_values[-1]
+        else:
+            out = self.dummy_pose.cuda(x.device)
+            out = out[None, :, :].repeat(x.shape[0], 1, 1)
 
-        # NOTE: This is a triple of next_capsule_value, presence, object_
-        # Pose is the next_capsule_value. So we have pose, presence, object.
-        # We then want the presence to be sparse over the capsules (dim=1), so
-        # we put an L1 penalty on it. Otherwise, it will just be 1 everywhere.
-        # We want pose * object_ * presence to be informative of the ordering.
-        # And we want pose * object_ to be relatively the same across frames.
-        # ordering.
-        # pose, presence, object_ = out
         pose = out
-
         if return_embedding:
             out = pose
             if flatten:
@@ -708,6 +718,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     else:
         pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    presence_probs_image = presence_probs.view(
+        batch_size, num_images, -1)
 
     stats = {}
 
@@ -727,6 +739,46 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         })
 
     loss = 0.
+
+    # pose[:, 0, :] is [bs, num_capsules, num_dim], presence_probs_image is [bs, ni, num_capsules]
+
+    if args.use_nce_probs:
+        anchor = presence_probs_image[:, 0, :]
+        if use_two_images:
+            other = presence_probs_image[:, 1, :]
+        else:
+            other = presence_probs_image[:, 2, :]
+
+        anchor_normalized = anchor / (anchor.norm(dim=1, keepdim=True) + 1e-6)
+        anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+        other_normalized = other / (other.norm(dim=1, keepdim=True) + 1e-6)
+        other_normalized = other_normalized.view(1, batch_size, -1)
+        # similarity will be [bs, bs, num_capsules * num_dims] after this.
+        similarity = anchor_normalized * other_normalized
+        # now multiply by the temperature.
+        similarity *= args.nce_presence_temperature
+        # and then sum to get the dot product (cosign similarity).
+        # this is [bs, bs]. the positive samples are on the diagonal.
+        similarity = similarity.sum(2)
+        # the diagonal has the positive similarity = log(exp(sim(x, y)))
+        identity = torch.eye(batch_size).to(similarity.device)
+        positive_similarity = (similarity * identity).sum(1)
+
+        # we get the total similarity by taking the logsumexp of similarity.
+        log_sum_total = torch.logsumexp(similarity, dim=1)
+        diff = positive_similarity - log_sum_total
+        nce = -diff.mean()
+
+        total_similarity = similarity.sum(1)
+        negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+        positive_similarity = positive_similarity.mean().item()
+
+        loss += nce * args.nce_presence_lambda
+        stats.update({
+            'pos_sim_presence': positive_similarity,
+            'neg_sim_presence': negative_similarity,
+            'nce_presence': nce.item()            
+        })
 
     if args.use_angle_loss:
         # Optimize the angle between (f1, f2) and (f1, f3).
@@ -798,8 +850,6 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
 
         # NOTE: Omgahd, none of these have been correct as of May 4th. Ugh.
         # The below is fixed now. It was using norm instead of sum before.
-        presence_probs_image = presence_probs.view(
-            batch_size, num_images, -1)
         presence_probs_first = presence_probs_image[:, 0]
 
         presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
@@ -993,9 +1043,26 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             loss += within_entropy * args.lambda_within_entropy
             loss -= between_entropy * args.lambda_between_entropy
         elif args.presence_loss_type in [
-                'squash_prior_sparsity', 'squash_prior_sparsity_nomul'
+                'squash_prior_sparsity', 'squash_prior_sparsity_nomul',
+                'squash_prior_sparsity_within_entropy',
+                'squash_prior_sparsity_within_entropy_nomul',
         ]:
             # NOTE: These are incorrect as well.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type in [
+                'squash_prior_sparsity_within_entropy',
+                'squash_prior_sparsity_within_entropy_nomul',
+        ]:
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
             target_capsule_presence = batch_size * 1. / args.num_output_classes
             capsule_presence_sum = presence_probs.sum(0)
@@ -1069,7 +1136,9 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             hinge_capsule_presence_loss = F.relu(hinge_capsule_presence).mean()
             loss += hinge_capsule_presence_loss * args.hinge_presence_loss
             stats['presence_hinge_loss'] = hinge_capsule_presence_loss.item()
-        elif args.presence_loss_type == 'sigmoid_prior_sparsity_fix':
+        elif args.presence_loss_type in [
+                'sigmoid_prior_sparsity_fix', 'sigmoid_prior_sparsity_fix_nospike'
+        ]:
             # This is fixing the sigmoid_prior_sparsity up above, which was
             # using the wrong target_capsule_presence gien the size of the size
             # of the presence_probs.
@@ -1123,6 +1192,23 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
             presence_loss = capsule_presence_loss + example_presence_loss
             loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type in [
+                'squash_prior_sparsity_within_entropy_fix',
+                'squash_prior_sparsity_within_entropy_nomul_fix', 
+        ]:
+            # NOTE: These are incorrect as well.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * num_images * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss += within_entropy * args.lambda_within_entropy
             stats['capsule_presence_loss'] = capsule_presence_loss.item()
             stats['example_presence_loss'] = example_presence_loss.item()
             stats['presence_loss'] = presence_loss.item()

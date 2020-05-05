@@ -1,4 +1,7 @@
+from collections import defaultdict
+import copy
 import gzip
+import math
 import os
 import random
 
@@ -7,6 +10,61 @@ import numpy as np
 import torch
 import torch.utils.data as data
 from torchvision.datasets.utils import download_url, makedir_exist_ok
+
+
+class MovingMNISTClassSampler(data.Sampler):
+    def __init__(self, data_source, num_replicas=None, rank=None, shuffle=True):
+        self.data_source = data_source
+        self.epoch = 0
+        self.shuffle = shuffle
+
+        index_by_label = defaultdict(list)
+        for index, label in enumerate(data_source.labels):
+            index_by_label[int(label)].append(index)
+        self.index_by_label = index_by_label        
+        self.total_num_samples = len(data_source.labels)
+        self.num_replicas = num_replicas
+        self.num_samples = int(
+            math.ceil(len(data_source) * 1.0 / self.num_replicas)
+        )
+        self.total_size = self.num_samples * self.num_replicas
+        self.rank = rank
+
+    def __len__(self):
+        return self.num_samples
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def __iter__(self):
+        index_by_label = copy.copy(self.index_by_label)
+        if self.shuffle:
+            random.seed(self.epoch)
+            for index, lst in index_by_label.items():
+                random.shuffle(lst)
+        
+        indices = []
+        row = 0
+        while len(indices) < self.total_num_samples:
+            for index in sorted(index_by_label.keys()):
+                if row >= len(index_by_label[index]):
+                    continue
+                indices.append(index_by_label[index][row])
+            row += 1
+
+        # add extra samples to make it evenly divisible
+        print("Len ndices: ", len(indices))
+        print(indices[:25], indices[-25:])
+        if self.total_size > len(indices):
+            indices += indices[:(self.total_size - len(indices))]
+        indices = indices[:self.total_size]
+        assert len(indices) == self.total_size
+
+        # subsample
+        indices = indices[self.rank:self.total_size:self.num_replicas]
+        assert len(indices) == self.num_samples
+
+        return iter(indices)
 
 
 class MovingMNIST(data.Dataset):
@@ -21,6 +79,8 @@ class MovingMNIST(data.Dataset):
         self.is_reorder_loss = is_reorder_loss
 
         data, labels = self.load_dataset(train)
+        self.labels = labels
+
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
         self.data_handler = handler(
@@ -38,7 +98,7 @@ class MovingMNIST(data.Dataset):
         elif train:
             # self.data_size = 64 * pow(2, 12)
             # NOTE: I changed this so that we can get more epochs.
-            self.data_size = 64 * pow(2, 8)
+            self.data_size = 64 * pow(2, 9) # NOTE: Has been 8 for a long time.
         else:
             self.data_size = 64 * pow(2, 5)
 

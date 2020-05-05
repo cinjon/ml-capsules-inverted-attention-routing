@@ -34,6 +34,7 @@ import cinjon_jobs
 import zeping_jobs
 from src.moving_mnist.moving_mnist import MovingMNist
 from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
+from src.moving_mnist.moving_mnist2 import MovingMNISTClassSampler
 from src import capsule_time_model
 from src.affnist import AffNist
 from src.gymnastics import GymnasticsVideo
@@ -263,17 +264,37 @@ def get_loaders(args, rank=0):
             ])
         )
         if args.num_gpus == 1:
-            train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                                       batch_size=args.batch_size,
-                                                       shuffle=True,
-                                                       num_workers=args.num_workers)
+            if args.use_class_sampler:
+                assert(args.batch_size % 5 != 0)
+                train_sampler = MovingMNISTClassSampler(
+                    train_set, num_replicas=1, rank=0, shuffle=True)
+                train_loader = torch.utils.data.DataLoader(
+    	            dataset=train_set,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    num_workers=1,
+                    pin_memory=True,
+                    sampler=train_sampler,
+                    drop_last=True
+                )
+            else:
+                train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                           batch_size=args.batch_size,
+                                                           shuffle=True,
+                                                           num_workers=args.num_workers)
         else:
             print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
-            train_sampler = torch.utils.data.distributed.DistributedSampler(
-    	        train_set,
-    	        num_replicas=args.num_gpus,
-    	        rank=rank
-            )
+            if args.use_class_sampler:
+                assert(args.batch_size % 5 != 0)
+                train_sampler = MovingMNISTClassSampler(
+                    train_set, num_replicas=args.num_gpus, rank=rank,
+                    shuffle=True)
+            else:
+                train_sampler = torch.utils.data.distributed.DistributedSampler(
+    	            train_set,
+    	            num_replicas=args.num_gpus,
+    	            rank=rank
+                )
             train_loader = torch.utils.data.DataLoader(
     	        dataset=train_set,
                 batch_size=args.batch_size,
@@ -575,6 +596,10 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
 
     t = time.time()
     optimizer.zero_grad()
+
+    if args.num_gpus > 1:
+        loader.sampler.set_epoch(epoch)
+
     for batch_idx, (images, labels) in enumerate(loader):
         if criterion == 'triplet':
             # NOTE: Zeping.
@@ -888,6 +913,8 @@ def main(gpu, args, port=12355):
             raise
         net = ReorderResNet(resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
     else:
+        do_capsule_computation = args.criterion != 'triangle_margin2_angle_nce' or \
+            args.use_nce_loss or args.use_hinge_loss or args.use_angle_loss
         net = capsule_time_model.CapsTimeModel(
             config['params'],
             args.backbone,
@@ -898,7 +925,9 @@ def main(gpu, args, port=12355):
             is_discriminating_model=is_discriminating_model,
             use_presence_probs=args.use_presence_probs,
             presence_temperature=args.presence_temperature,
-            presence_loss_type=args.presence_loss_type)
+            presence_loss_type=args.presence_loss_type,
+            do_capsule_computation=do_capsule_computation
+        )
 
     if args.optimizer == 'adam':
         optimizer = optim.Adam(net.parameters(),
@@ -1123,6 +1152,9 @@ if __name__ == '__main__':
                         default='MovingMNist2',
                         type=str,
                         help='dataset: MovingMNist and a host of gymnastics ones.')
+    parser.add_argument('--use_class_sampler',
+                        action='store_true',
+                        help='whether to use the class sampler with MovingMNist2')
     parser.add_argument('--backbone',
                         default='resnet',
                         type=str,
@@ -1179,7 +1211,15 @@ if __name__ == '__main__':
                         default=1.0,
                         type=float,
                         help='temperature to multiply with the similarity')
+    parser.add_argument('--nce_presence_temperature',
+                        default=1.0,
+                        type=float,
+                        help='temperature to multiply with the similarity')
     parser.add_argument('--nce_lambda',
+                        default=1.0,
+                        type=float,
+                        help='lambda on the nce loss.')
+    parser.add_argument('--nce_presence_lambda',
                         default=1.0,
                         type=float,
                         help='lambda on the nce loss.')
@@ -1273,6 +1313,10 @@ if __name__ == '__main__':
                         default=False,
                         action='store_true',
                         help='whether to use the nce loss in triangle_nce')
+    parser.add_argument('--use_nce_probs',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the nce over the presence probs')
     parser.add_argument('--num_output_classes',
                         default=10,
                         type=float,
@@ -1283,6 +1327,10 @@ if __name__ == '__main__':
                         help='the lambda on the cos between first and third frames.')
     parser.add_argument('--presence_diffcos_lambda',
                         default=3.,
+                        type=float,
+                        help='the lambda on the cos between first and third frames.')
+    parser.add_argument('--presence_hinge_lambda',
+                        default=1.,
                         type=float,
                         help='the lambda on the cos between first and third frames.')
 

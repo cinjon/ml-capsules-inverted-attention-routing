@@ -908,7 +908,13 @@ def run(find_counter=None):
             'sigmoid_within_entropy',
             'sigmoid_l1',
             'sigmoid_l1_between',
-            'sigmoid_only'
+            'sigmoid_only',
+            'sigmoid_prior_sparsity_fix',
+            'sigmoid_prior_sparsity_between_entropy_fix',
+            'squash_prior_sparsity_fix',
+            'squash_prior_sparsity_nomul_fix',
+            'sigmoid_prior_sparsity_within_between_entropy_fix', # <- 338
+            # 'sigmoid_hinge_presence',
         ],
     }
     time = 10
@@ -917,6 +923,135 @@ def run(find_counter=None):
         find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
+
+
+    # Here, we use the cass sampler.
+    # Counter: 339
+    num_gpus = 1
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 24,
+        'use_class_sampler': True
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_prior_sparsity_fix',
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we try between again because that was fucked up before.
+    # Note though that it's the within that needs help it appears :/.
+    # Counter: 340
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_l1_between',
+            'sigmoid_prior_sparsity_between_entropy_fix', 
+            'sigmoid_prior_sparsity_within_between_entropy_fix',
+            # dafuk is this below: https://www.comet.ml/cinjon/capsules/f3b85483692d48299040f6618c1093b0.
+            # ok, it just has more that are on.
+            'sigmoid_within_between_entropy', 
+            'squash_prior_sparsity_within_entropy_fix',
+            'squash_prior_sparsity_within_entropy_nomul_fix',
+            'sigmoid_prior_sparsity_fix_nospike'
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
+    # Counter: 
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': True,
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.05',
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_only'
+        ],
+        'config': [
+            'resnet_backbone_movingmnist2_20ccgray',
+            'resnet_backbone_movingmnist2_30ccgray',
+        ]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
+    # # Counter: 
+    # print(counter)
+    # num_gpus = 2
+    # job.update({
+    #     'no_use_angle_loss': True,
+    #     'no_use_hinge_loss': True,
+    #     'no_use_nce_loss': True,
+    #     'use_nce_probs': True,
+    #     'num_output_classes': 10,
+    #     'lr': 1e-4,
+    #     'num_workers': 4,
+    #     'num_gpus': num_gpus,
+    #     'batch_size': 32,
+    #     'lambda_within_entropy': 1.0,
+    #     'use_class_sampler': False,
+    #     'config': 'resnet_backbone_movingmnist2_20ccgray',
+    #     'name': '2020.05.05',
+    # })
+    # var_arrays = {        
+    #     'presence_loss_type': [
+    #         'sigmoid_only'
+    #     ],
+    # }
+    # time = 10
+    # counter, _job = do_jobarray(
+    #     email, code_directory, num_gpus, counter, job, var_arrays, time,
+    #     find_counter=find_counter, do_job=False)
+    # if find_counter and _job:
+    #     return counter, _job
 
     return None, None
             
