@@ -170,11 +170,15 @@ class CapsTimeModel(nn.Module):
 
         if self.presence_loss_type in [
                 'sigmoid_l1', 'sigmoid_only', 'sigmoid_prior_sparsity',
+                'sigmoid_prior_sparsity_fix', 
                 'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
                 'sigmoid_within_between_entropy', 'sigmoid_l1_between',
                 'sigmoid_prior_sparsity_example_between_entropy',
                 'sigmoid_prior_sparsity_between_entropy',
-                'sigmoid_cossim', 'sigmoid_cossim_within_entropy'
+                'sigmoid_prior_sparsity_between_entropy_fix',
+                'sigmoid_prior_sparsity_within_between_entropy_fix',
+                'sigmoid_cossim', 'sigmoid_cossim_within_entropy',
+                'sigmoid_hinge_presence'
         ]:
             logits *= self.presence_temperature
             # NOTE: we add noise here in order to try and spike it.
@@ -802,7 +806,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
         within_entropy = -within_presence * torch.log(within_presence) / np.log(2)            
         within_entropy = within_entropy.sum(1).mean()
-        
+
+        # NOTE: This ALSO isn't correct. It's a different value that we are computing here.
         presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-8
         between_presence = presence_probs_first / presence_probs_sum0 + 1e-8
         between_entropy = -between_presence * torch.log(between_presence) / np.log(2)            
@@ -859,6 +864,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # the capsules to be present for at least one of every output_class.
             # NOTE: The assumption there is that there is only one object in
             # each image. This would have to be changed for adding in more classes.
+            # NOTE: This was not possible to do because the batch_size was incorrect for presence_probs to use!!!
+            # See below for the fix (sigmoid_prior_sparsity_fix)
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
             target_capsule_presence = batch_size * 1. / args.num_output_classes
             capsule_presence_sum = presence_probs.sum(0)
@@ -982,6 +989,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         elif args.presence_loss_type in [
                 'squash_prior_sparsity', 'squash_prior_sparsity_nomul'
         ]:
+            # NOTE: These are incorrect as well.
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
             target_capsule_presence = batch_size * 1. / args.num_output_classes
             capsule_presence_sum = presence_probs.sum(0)
@@ -1030,6 +1038,86 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             presence_loss = example_presence_loss
             loss += presence_loss * args.lambda_sparse_presence
             loss -= between_entropy * args.lambda_between_entropy
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type in [
+                'sigmoid_hinge_presence'
+        ]:
+            # This is saying ok look, we want each capsule to be on for some
+            # percent of the batch on average. Say that there are C classes
+            # and B batch entries. Then each capsule should be 1 for ~B/C of
+            # the time. We tried doing L2 above re the capsule_presence, but
+            # let's makign that a bit softer and doing a margin loss, so that
+            # it's at LEAST that amount.
+            # NOTE: My prediction is that this will make it so that each wants
+            # to be responsible for at least blah of the 
+            target_capsule_presence = batch_size * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs_first.sum(0)
+
+            # The hinge now is on the capsule_presence_sum being greater than
+            # the target_capsule_presence.
+            hinge_capsule_presence = target_capsule_presence - capsule_presence_sum
+            # If hinge_capsule_presence > 0, then the capsule_presence_sum is too small.
+            # So we penalize it by saying that the loss is
+            # F.relu(hinge_capsule_presence)
+            hinge_capsule_presence_loss = F.relu(hinge_capsule_presence).mean()
+            loss += hinge_capsule_presence_loss * args.hinge_presence_loss
+            stats['presence_hinge_loss'] = hinge_capsule_presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_fix':
+            # This is fixing the sigmoid_prior_sparsity up above, which was
+            # using the wrong target_capsule_presence gien the size of the size
+            # of the presence_probs.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * num_images * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_between_entropy_fix':
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * num_images * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_between_entropy
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_prior_sparsity_within_between_entropy_fix':
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * num_images * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            loss += within_entropy * args.lambda_within_entropy
+            loss -= between_entropy * args.lambda_between_entropy
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
+            stats['example_presence_loss'] = example_presence_loss.item()
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type in [
+                'squash_prior_sparsity_fix', 'squash_prior_sparsity_nomul_fix'
+        ]:
+            # NOTE: These are incorrect as well.
+            target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
+            target_capsule_presence = batch_size * num_images * 1. / args.num_output_classes
+            capsule_presence_sum = presence_probs.sum(0)
+            capsule_presence_loss = ((capsule_presence_sum - target_capsule_presence)**2).mean()
+            example_presence_sum = presence_probs.sum(1)
+            example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()
+            presence_loss = capsule_presence_loss + example_presence_loss
+            loss += presence_loss * args.lambda_sparse_presence
+            stats['capsule_presence_loss'] = capsule_presence_loss.item()
             stats['example_presence_loss'] = example_presence_loss.item()
             stats['presence_loss'] = presence_loss.item()
         else:
