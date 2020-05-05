@@ -804,14 +804,20 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
 
         presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
         within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
-        within_entropy = -within_presence * torch.log(within_presence) / np.log(2)            
-        within_entropy = within_entropy.sum(1).mean()
+        within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+        # This is correct with a shape of 24.
+        within_entropy = within_entropy.sum(1)
+        within_entropy = within_entropy.mean()
 
-        # NOTE: This ALSO isn't correct. It's a different value that we are computing here.
-        presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-8
-        between_presence = presence_probs_first / presence_probs_sum0 + 1e-8
-        between_entropy = -between_presence * torch.log(between_presence) / np.log(2)            
-        between_entropy = between_entropy.sum(0).mean()
+        # NOTE: This ALSO isn't correct. It's a different value than what we
+        # want. What we want is to have the sums of the capsules be pretty much
+        # the same, i.e. for them all to be used. So we want the entropy on top
+        # of the sum of these numbers to be large.
+        # (It's now correct --> May 5th)
+        presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
+        presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
+        between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
+        between_entropy = between_entropy.mean(0)
         
         stats['within_entropy'] = within_entropy.item()
         stats['between_entropy'] = between_entropy.item()
