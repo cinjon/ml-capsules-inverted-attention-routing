@@ -783,7 +783,7 @@ def run(find_counter=None):
         'no_use_hinge_loss': True,
         'num_output_classes': 10,
         'lambda_between_entropy': 3.0,
-        'lambda_within_entropy': 3.0, 
+        'lambda_within_entropy': 100.0, 
         'lr': 3e-4,
         'num_workers': 4,
         'num_gpus': 1,
@@ -818,6 +818,97 @@ def run(find_counter=None):
     var_arrays = {        
         'presence_loss_type': [
             'squash_example_between',
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # What if we didn't multiply by the presence? We can do that in the squash
+    # version because the probabilities are a function of the pose as well.
+    # We are using the pose to inform the probabilities, so that's getting
+    # backpropped there w/o actually doing this separate multiplication.
+    # We turn off everything but the nce.
+    # Counter: 323
+    print(counter)
+    num_gpus = 1
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lambda_between_entropy': 3.0,
+        'lr': 3e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 24, # on the regular.
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'squash_prior_sparsity_nomul', # <-- went to .05 for everything.
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # Same re using squash to get at the logits. Using dgx with higher LR.
+    # Counter: 324
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lr': 3e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 24,
+        'lambda_within_entropy': 100.0,
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'squash_within_between_entropy_nomul',
+            'squash_example_between_nomul' # <-- .05 for everything. we know this by the wihthin entropy.
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we use the cossim thing.
+    # Counter: 326
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 24,
+        'lambda_within_entropy': 1.0,
+        'presence_diffcos_lambda': 10.0,
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'squash_cossim',
+            'sigmoid_cossim',
+            'squash_cossim_nomul',
+            'sigmoid_cossim_within_entropy',
+            'sigmoid_within_entropy',
+            'sigmoid_l1',
+            'sigmoid_l1_between',
+            'sigmoid_only'
         ],
     }
     time = 10

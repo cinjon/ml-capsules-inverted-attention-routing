@@ -169,11 +169,12 @@ class CapsTimeModel(nn.Module):
             logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
 
         if self.presence_loss_type in [
-                'sigmoid_l1', 'sigmoid_prior_sparsity',
+                'sigmoid_l1', 'sigmoid_only', 'sigmoid_prior_sparsity',
                 'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
-                'sigmoid_within_between_entropy',
+                'sigmoid_within_between_entropy', 'sigmoid_l1_between',
                 'sigmoid_prior_sparsity_example_between_entropy',
                 'sigmoid_prior_sparsity_between_entropy',
+                'sigmoid_cossim', 'sigmoid_cossim_within_entropy'
         ]:
             logits *= self.presence_temperature
             # NOTE: we add noise here in order to try and spike it.
@@ -202,6 +203,13 @@ class CapsTimeModel(nn.Module):
             pose_norm_sq = final_pose.norm(dim=2, keepdim=True) ** 2
             logits = pose_norm_sq / (1 + pose_norm_sq) * pose_normalized
             logits = logits.norm(dim=2)
+        # elif 'weightsum' in self.presence_loss_type:
+        #     # final_pose is [bs * num_images, num_capsules, capsule_dim]
+        #     # in this version, we just use the sum of the capsule_dims as the
+        #     # weight. So:
+        #     per_capsule_sum = final_pose.sum(dim=2)
+        #     norm_sum = per_capsule_sum.sum(1, keepdim=True)
+        #     per_capsule_sum_normalized
         else:
             raise
         return logits
@@ -691,7 +699,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     images = images.view(batch_size * num_images, *images.shape[2:])
     if args.use_presence_probs:
         pose, presence_probs = model(images)
-        pose *= presence_probs[:, :, None]
+        if 'nomul' not in args.presence_loss_type:
+            pose *= presence_probs[:, :, None]
     else:
         pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
@@ -793,7 +802,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
         within_entropy = -within_presence * torch.log(within_presence) / np.log(2)            
         within_entropy = within_entropy.sum(1).mean()
-
+        
         presence_probs_sum0 = presence_probs_first.sum(dim=0, keepdim=True) + 1e-8
         between_presence = presence_probs_first / presence_probs_sum0 + 1e-8
         between_entropy = -between_presence * torch.log(between_presence) / np.log(2)            
@@ -807,11 +816,20 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         stats['mean_min_prob'] = min_values.mean().item()
         stats['mean_prob'] = presence_probs_first.mean().item()
 
-        if args.presence_loss_type == 'sigmoid_l1':
+        if args.presence_loss_type == 'sigmoid_only':
+            pass
+        elif args.presence_loss_type == 'sigmoid_l1':
             # NOTE: Using this presence loss results in the model always using
             # the same subset of capsules, regardless of input.
             presence_loss = presence_probs.sum(1).mean()
             loss += presence_loss * args.lambda_sparse_presence
+            stats['presence_loss'] = presence_loss.item()
+        elif args.presence_loss_type == 'sigmoid_l1_between':
+            # NOTE: Using this presence loss results in the model always using
+            # the same subset of capsules, regardless of input.
+            presence_loss = presence_probs.sum(1).mean()
+            loss += presence_loss * args.lambda_sparse_presence
+            loss -= between_entropy * args.lambda_between_entropy
             stats['presence_loss'] = presence_loss.item()
         elif args.presence_loss_type == 'sigmoid_prior_sparsity_example':
             # Ok, yeah if we keep this going, then it gets everything good
@@ -889,8 +907,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # entropy would result in a sharp distribution.
             # I suspect that this would enable the model to use few of the
             # capsules and be fine. Let's see if that happens.
-            # So what this does is the model uses few of the capsules but then
-            # doesn't spread them around. Everyone just uses the capsules.
+            # NOTE: So what this does is the model uses few of the capsules but
+            # then doesn't spread them around. Everyone just uses the capsules.
             loss += within_entropy * args.lambda_within_entropy
         elif args.presence_loss_type == 'sigmoid_within_between_entropy':
             # Here, we keep the within_exampel entropy, but we add the between
@@ -904,6 +922,53 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # being that of using only image one.
             loss += within_entropy * args.lambda_within_entropy
             loss -= between_entropy * args.lambda_between_entropy
+        elif args.presence_loss_type == 'sigmoid_cossim':
+            # presence_probs_image is [bs, num_images, num_capsules] and
+            # represents the capsule probabilities per image. In this loss,
+            # we maximize the cossim of [bs_k, 0] with [bs_k, 1] and minimize the
+            # cossim of [bs_k, 0] with [bs_j, 0]
+            same_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], presence_probs_image[:, 1], dim=1
+            ).mean()
+            # rolled_presence_probs_image is a 1-permutation of presence_probs_image.
+            # rolled_presence_probs_image = torch.cat(
+            #     (presence_probs_image[-1:, :, :],
+            #      presence_probs_image[:-1, :, :]),
+            #     dim=0
+            # )
+            rolled_presence_probs_image = torch.roll(presence_probs_image, 1, 0)
+            diff_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], rolled_presence_probs_image[:, 0],
+                dim=1
+            ).mean()
+            # loss += same_capsule_cossim * args.presence_samecos_lambda
+            loss -= diff_capsule_cossim * args.presence_diffcos_lambda
+            stats['same_capsule_cossim_loss'] = same_capsule_cossim.item()
+            stats['diff_capsule_cossim_loss'] = diff_capsule_cossim.item()
+        elif args.presence_loss_type == 'sigmoid_cossim_within_entropy':
+            # presence_probs_image is [bs, num_images, num_capsules] and
+            # represents the capsule probabilities per image. In this loss,
+            # we maximize the cossim of [bs_k, 0] with [bs_k, 1] and minimize the
+            # cossim of [bs_k, 0] with [bs_j, 0]
+            same_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], presence_probs_image[:, 1], dim=1
+            ).mean()
+            # rolled_presence_probs_image is a 1-permutation of presence_probs_image.
+            # rolled_presence_probs_image = torch.cat(
+            #     (presence_probs_image[-1:, :, :],
+            #      presence_probs_image[:-1, :, :]),
+            #     dim=0
+            # )
+            rolled_presence_probs_image = torch.roll(presence_probs_image, 1, 0)
+            diff_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], rolled_presence_probs_image[:, 0],
+                dim=1
+            ).mean()
+            # loss += same_capsule_cossim * args.presence_samecos_lambda
+            loss -= diff_capsule_cossim * args.presence_diffcos_lambda
+            loss += within_entropy * args.lambda_within_entropy
+            stats['same_capsule_cossim_loss'] = same_capsule_cossim.item()
+            stats['diff_capsule_cossim_loss'] = diff_capsule_cossim.item()
         elif args.presence_loss_type == 'softmax':
             # This seems to result in everyone getting the same capsule. Let's
             # see what happens if we let it go longer.
@@ -914,7 +979,9 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         elif args.presence_loss_type == 'softmax_within_between_entropy':
             loss += within_entropy * args.lambda_within_entropy
             loss -= between_entropy * args.lambda_between_entropy
-        elif args.presence_loss_type == 'squash_prior_sparsity':
+        elif args.presence_loss_type in [
+                'squash_prior_sparsity', 'squash_prior_sparsity_nomul'
+        ]:
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
             target_capsule_presence = batch_size * 1. / args.num_output_classes
             capsule_presence_sum = presence_probs.sum(0)
@@ -926,10 +993,37 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             stats['capsule_presence_loss'] = capsule_presence_loss.item()
             stats['example_presence_loss'] = example_presence_loss.item()
             stats['presence_loss'] = presence_loss.item()
-        elif args.presence_loss_type == 'squash_within_between_entropy':
+        elif args.presence_loss_type in [
+                'squash_within_between_entropy', 'squash_within_between_entropy_nomul'
+        ]:
             loss += within_entropy * args.lambda_within_entropy
             loss -= between_entropy * args.lambda_between_entropy
-        elif args.presence_loss_type == 'squash_example_between':
+        elif args.presence_loss_type in ['squash_cossim', 'squash_cossim_nomul']:
+            # presence_probs_image is [bs, num_images, num_capsules] and
+            # represents the capsule probabilities per image. In this loss,
+            # we maximize the cossim of [bs_k, 0] with [bs_k, 1] and minimize the
+            # cossim of [bs_k, 0] with [bs_j, 0]
+            same_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], presence_probs_image[:, 1], dim=1
+            ).mean()
+            # rolled_presence_probs_image is a 1-permutation of presence_probs_image.
+            # rolled_presence_probs_image = torch.cat(
+            #     (presence_probs_image[-1:, :, :],
+            #      presence_probs_image[:-1, :, :]),
+            #     dim=0
+            # )
+            rolled_presence_probs_image = torch.roll(presence_probs_image, 1, 0)
+            diff_capsule_cossim = F.cosine_similarity(
+                presence_probs_image[:, 0], rolled_presence_probs_image[:, 0],
+                dim=1
+            ).mean()
+            # loss += same_capsule_cossim * args.presence_samecos_lambda
+            loss -= diff_capsule_cossim * args.presence_diffcos_lambda
+            stats['same_capsule_cossim_loss'] = same_capsule_cossim.item()
+            stats['diff_capsule_cossim_loss'] = diff_capsule_cossim.item()
+        elif args.presence_loss_type in [
+                'squash_example_between', 'squash_example_between_nomul'
+        ]:
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
             example_presence_sum = presence_probs.sum(1)
             example_presence_loss = ((example_presence_sum - target_example_presence)**2).mean()

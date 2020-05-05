@@ -99,6 +99,8 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
 
     orig_images = []
     model_poses = []
+    model_orig_poses = []
+    model_presence = []
     targets = []
 
     with torch.no_grad():
@@ -125,11 +127,16 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                 poses = model(images)
                 if type(poses) == tuple:
                     poses, presence = poses
+                    orig_poses = poses
                     poses *= presence[:, :, None]
                 poses = poses.cpu()
+                orig_poses = orig_poses.cpu()
+                presence = presence.cpu()
                 images = images.cpu()
                 del images
                 model_poses.append(poses.view(batch_size, -1))
+                model_orig_poses.append(orig_poses.view(batch_size, -1))
+                model_presence.append(presence.view(batch_size, -1))
                 targets.append(labels)
                 # orig_images.append(images.view(batch_size, -1))
 
@@ -138,10 +145,17 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
             torch.cuda.empty_cache()
             model_poses = torch.cat(model_poses, 0)
             model_poses = model_poses.numpy()
+            model_orig_poses = torch.cat(model_orig_poses, 0)
+            model_orig_poses = model_orig_poses.numpy()
+            model_presence = torch.cat(model_presence, 0)
+            model_presence = model_presence.numpy()
             targets = torch.cat(targets, 0)
             targets = targets.numpy().squeeze()
 
-            for x, key in zip([orig_images, model_poses], ['images', 'poses']):
+            for x, key in zip(
+                    [orig_images, model_poses, model_orig_poses, model_presence],
+                    ['images', 'poses', 'orig_poses', 'presence']
+            ):
                 if key == 'images':
                     continue
 
@@ -177,6 +191,8 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                     os.remove(path_)
 
             model_poses = []
+            model_orig_poses = []
+            model_presence = []
             orig_images = []
             targets = []
 
@@ -1261,6 +1277,14 @@ if __name__ == '__main__':
                         default=10,
                         type=float,
                         help='the number of classes. this is a hack and dumb.')
+    parser.add_argument('--presence_samecos_lambda',
+                        default=3.,
+                        type=float,
+                        help='the lambda on the cos between first and third frames.')
+    parser.add_argument('--presence_diffcos_lambda',
+                        default=3.,
+                        type=float,
+                        help='the lambda on the cos between first and third frames.')
 
     # VideoClip info
     parser.add_argument('--num_videoframes', type=int, default=100)
