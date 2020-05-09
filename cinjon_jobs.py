@@ -834,7 +834,6 @@ def run(find_counter=None):
     # backpropped there w/o actually doing this separate multiplication.
     # We turn off everything but the nce.
     # Counter: 323
-    print(counter)
     num_gpus = 1
     job.update({
         'no_use_angle_loss': True,
@@ -954,7 +953,6 @@ def run(find_counter=None):
     # Here, we try between again because that was fucked up before.
     # Note though that it's the within that needs help it appears :/.
     # Counter: 340
-    print(counter)
     num_gpus = 2
     job.update({
         'no_use_angle_loss': True,
@@ -989,8 +987,7 @@ def run(find_counter=None):
 
 
     # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
-    # Counter: 
-    print(counter)
+    # Counter: 347
     num_gpus = 2
     job.update({
         'no_use_angle_loss': True,
@@ -1022,38 +1019,249 @@ def run(find_counter=None):
     if find_counter and _job:
         return counter, _job
 
-    # # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
-    # # Counter: 
-    # print(counter)
-    # num_gpus = 2
-    # job.update({
-    #     'no_use_angle_loss': True,
-    #     'no_use_hinge_loss': True,
-    #     'no_use_nce_loss': True,
-    #     'use_nce_probs': True,
-    #     'num_output_classes': 10,
-    #     'lr': 1e-4,
-    #     'num_workers': 4,
-    #     'num_gpus': num_gpus,
-    #     'batch_size': 32,
-    #     'lambda_within_entropy': 1.0,
-    #     'use_class_sampler': False,
-    #     'config': 'resnet_backbone_movingmnist2_20ccgray',
-    #     'name': '2020.05.05',
-    # })
-    # var_arrays = {        
-    #     'presence_loss_type': [
-    #         'sigmoid_only'
-    #     ],
-    # }
-    # time = 10
-    # counter, _job = do_jobarray(
-    #     email, code_directory, num_gpus, counter, job, var_arrays, time,
-    #     find_counter=find_counter, do_job=False)
-    # if find_counter and _job:
-    #     return counter, _job
+    # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
+    # Counter: 349
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': False,
+        'criterion': 'discriminative_probs',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.06',
+        'presence_loss_type': 'sigmoid_only'
+    })
+    var_arrays = {        
+        'config': [
+            'resnet_backbone_movingmnist2_10ccgray',
+            'resnet_backbone_movingmnist2_20ccgray'
+        ]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
+    # Counter: 351
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': False,
+        'use_nce_probs': False,
+        'criterion': 'triangle_margin2_angle_nce',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.06',
+        'presence_loss_type': 'sigmoid_only',
+        'use_simclr_xforms': True
+    })
+    var_arrays = {        
+        'config': [
+            'resnet_backbone_movingmnist2_20ccgray',
+            'resnet_backbone_movingmnist2_30ccgray'
+        ],
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Use nce_probs and nothing else. Lol, nothing to teach the rest of it ^_^
+    # Counter: 353
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': False,
+        'use_nce_probs': False,
+        'criterion': 'triangle_margin2_angle_nce',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.06',
+        'use_simclr_xforms': True
+    })
+    var_arrays = {        
+        'presence_loss_type': [
+            'sigmoid_prior_sparsity_fix',
+            'sigmoid_prior_sparsity_within_between_entropy_fix',
+            'sigmoid_within_between_entropy',
+            'sigmoid_within_entropy',
+        ]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the probs_test with the updated nce silly billy.
+    # Counter:  357
+    num_gpus = 2
+    job.update({
+        'use_simclr_xforms': False
+    })
+    var_arrays = {
+        'step_length': [0.035, 0.1]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the probs_test with the simclr repo approach.
+    # Counter:  359
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': False,
+        'criterion': 'probs_test',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-3,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.07',
+        'use_simclr_xforms': False,
+        'use_simclr_nce': True
+    })
+    var_arrays = {
+        'step_length': [0.035, 0.1],
+        'nce_presence_temperature': [1., 0.5]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the use_nce_probs with the simclr approach.
+    # Counter:  363
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': True,
+        'criterion': 'triangle_margin2_angle_nce',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.07',
+        'use_simclr_xforms': False,
+        'use_simclr_nce': True,
+        'presence_loss_type': 'sigmoid_only',
+    })
+    var_arrays = {
+        'step_length': [0.035, 0.1],
+        'use_diff_class_digit': [False, True],
+        'nce_presence_temperature': [1., 0.5]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the probs_test with the simclr repo approach but even lower temp
+    # Counter:  371
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': False,
+        'criterion': 'probs_test',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-3,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.08',
+        'use_simclr_xforms': False,
+        'use_simclr_nce': True,
+        'step_length': 0.035,
+        'use_rand_presence_noise': True
+    })
+    var_arrays = {
+        'nce_presence_temperature': [0.4, 0.3, 0.2, 0.1],
+    }
+    time = 3
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we keep the nce_presence_temperature at 1.0 but change hte probs
+    # test temperature to be higher. We do this w/ and w/o the rand noise
+    # Counter:  375
+    num_gpus = 2
+    job.update({
+        'nce_presence_temperature': 1.0
+    })
+    var_arrays = {
+        'presence_temperature': [3.0, 10.0],
+        'use_rand_presence_noise': [True, False]
+    }
+    time = 3
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
 
     return None, None
+
             
                                 
 if __name__ == '__main__':
