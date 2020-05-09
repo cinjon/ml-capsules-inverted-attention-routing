@@ -29,7 +29,8 @@ class CapsTimeModel(nn.Module):
                  use_presence_probs=False,
                  presence_temperature=1.0,
                  presence_loss_type='sigmoid_l1',
-                 do_capsule_computation=True
+                 do_capsule_computation=True,
+                 do_discriminative_probs=False
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -68,6 +69,12 @@ class CapsTimeModel(nn.Module):
                 input_dim *= params['backbone']['out_img_size']**2
                 output_dim = params['class_capsules']['num_caps']
                 self.presence_prob_head = nn.Linear(input_dim, output_dim)
+
+        self.do_discriminative_probs = do_discriminative_probs
+        if self.do_discriminative_probs:
+            input_dim = params['class_capsules']['num_caps']
+            output_dim = 10                
+            self.final_fc_probs = nn.Linear(input_dim, output_dim)
 
         self.do_capsule_computation = do_capsule_computation
         if not do_capsule_computation:
@@ -322,10 +329,33 @@ class CapsTimeModel(nn.Module):
             return out, pose
         elif self.use_presence_probs:
             presence_probs = self.get_presence(pre_caps_res, pose.clone())
-            return pose, presence_probs
+            if self.do_discriminative_probs:
+                flattened = presence_probs.view(presence_probs.shape[0], -1)
+                out = self.final_fc_probs(flattened)
+                return pose, presence_probs, out
+            else:
+                return pose, presence_probs
         else:
             # return pose, presence, object_
             return pose
+
+
+class ProbsTest(nn.Module):
+    def __init__(self, image_size, num_caps, temperature=1., use_noise=True):
+        super(ProbsTest, self).__init__()
+        self.linear = nn.Linear(image_size**2, num_caps)
+        self.temperature = temperature
+        self.use_noise = use_noise
+
+    def forward(self, x):
+        x = x.view(x.shape[0], -1)
+        out = self.linear(x)
+        out *= self.temperature
+        if self.use_noise:
+            rand_noise = torch.FloatTensor(out.size()).uniform_(-2, 2).to(out.device)
+            out += rand_noise
+        out = torch.sigmoid(out)
+        return out
 
 
 def get_bce_loss(model, images, labels):
@@ -687,6 +717,32 @@ def get_triangle_loss(self, images, device, args):
     return loss, stats
 
 
+def get_discriminative_probs(model, images, labels, device, epoch, args):
+    use_two_images = not args.use_hinge_loss and not args.use_angle_loss
+    batch_size, num_images = images.shape[:2]
+    
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose, presence_probs, class_probs = model(images)
+    if 'nomul' not in args.presence_loss_type:
+        pose *= presence_probs[:, :, None]
+
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    presence_probs_image = presence_probs.view(batch_size, num_images, -1)
+    class_probs = class_probs.view(batch_size, num_images, -1)
+    # Take the mean of the probs over the images, i.e. we want them all to end
+    # up as the same thing. And that's the loss.
+    class_probs = class_probs.mean(1)
+
+    loss = F.cross_entropy(class_probs, labels)
+    predictions = torch.argmax(class_probs, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
+    return loss, stats
+
+
 def get_triangle_nce_loss(model, images, device, epoch, args,
                           num_class_capsules=10):
     """Get linearizing loss AND the NCE loss.
@@ -708,7 +764,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     """
     use_two_images = not args.use_hinge_loss and not args.use_angle_loss
     batch_size, num_images = images.shape[:2]
-    
+
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
     if args.use_presence_probs:
@@ -743,42 +799,9 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     # pose[:, 0, :] is [bs, num_capsules, num_dim], presence_probs_image is [bs, ni, num_capsules]
 
     if args.use_nce_probs:
-        anchor = presence_probs_image[:, 0, :]
-        if use_two_images:
-            other = presence_probs_image[:, 1, :]
-        else:
-            other = presence_probs_image[:, 2, :]
-
-        anchor_normalized = anchor / (anchor.norm(dim=1, keepdim=True) + 1e-6)
-        anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
-        other_normalized = other / (other.norm(dim=1, keepdim=True) + 1e-6)
-        other_normalized = other_normalized.view(1, batch_size, -1)
-        # similarity will be [bs, bs, num_capsules * num_dims] after this.
-        similarity = anchor_normalized * other_normalized
-        # now multiply by the temperature.
-        similarity *= args.nce_presence_temperature
-        # and then sum to get the dot product (cosign similarity).
-        # this is [bs, bs]. the positive samples are on the diagonal.
-        similarity = similarity.sum(2)
-        # the diagonal has the positive similarity = log(exp(sim(x, y)))
-        identity = torch.eye(batch_size).to(similarity.device)
-        positive_similarity = (similarity * identity).sum(1)
-
-        # we get the total similarity by taking the logsumexp of similarity.
-        log_sum_total = torch.logsumexp(similarity, dim=1)
-        diff = positive_similarity - log_sum_total
-        nce = -diff.mean()
-
-        total_similarity = similarity.sum(1)
-        negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
-        positive_similarity = positive_similarity.mean().item()
-
+        nce, stats_ = _do_simclr_nce(presence_probs_image, args)
         loss += nce * args.nce_presence_lambda
-        stats.update({
-            'pos_sim_presence': positive_similarity,
-            'neg_sim_presence': negative_similarity,
-            'nce_presence': nce.item()            
-        })
+        stats.update(stats_)
 
     if args.use_angle_loss:
         # Optimize the angle between (f1, f2) and (f1, f3).
@@ -1241,4 +1264,142 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         for num, item in enumerate(std_per_capsule):
             stats['capsule_prob_std_%d' % num] = item
 
+    return loss, stats
+
+
+def _do_simclr_nce(probs, args):
+    """NOTE: This normalization that happens here should not be applied
+    across capsules, only across probs.
+    """
+    batch_size = probs.shape[0]
+    anchor = probs[:, 0]
+    other = probs[:, 1]
+    anchor = F.normalize(anchor, dim=1)
+    other = F.normalize(other, dim=1)
+    representations = torch.cat([other, anchor], dim=0)
+    similarity_matrix = F.cosine_similarity(
+        representations.unsqueeze(1), representations.unsqueeze(0), dim=-1)
+    # filter out the scores from the positive samples
+    l_pos = torch.diag(similarity_matrix, batch_size)
+    r_pos = torch.diag(similarity_matrix, -batch_size)
+    positives = torch.cat([l_pos, r_pos]).view(2 * batch_size, 1)
+
+    # the masking
+    diag = np.eye(2 * batch_size)
+    l1 = np.eye((2 * batch_size), 2 * batch_size, k=-batch_size)
+    l2 = np.eye((2 * batch_size), 2 * batch_size, k=batch_size)
+    mask = torch.from_numpy((diag + l1 + l2))
+    mask = (1 - mask).type(torch.bool)
+    mask = mask.to(probs.device)
+
+    negatives = similarity_matrix[mask].view(2*batch_size, -1)
+    neg_similarity = negatives.mean()
+    pos_similarity = positives.mean()
+
+    logits = torch.cat((positives, negatives), dim=1)
+    logits /= args.nce_presence_temperature
+
+    labels = torch.zeros(2 * batch_size).to(anchor.device).long()
+    loss = F.cross_entropy(logits, labels, reduction='mean')
+    # loss = loss / (2 * batch_size)
+
+    stats = {
+        'nce_presence': loss.item(),
+        'pos_sim_presence': pos_similarity.item(),
+        'neg_sim_presence': neg_similarity.item(),
+    }
+    return loss, stats
+
+
+def _do_our_nce(probs, args):
+    batch_size = probs.shape[0]
+    anchor = probs[:, 0]
+    other = probs[:, 1]
+    anchor_normalized = anchor / (anchor.norm(dim=1, keepdim=True) + 1e-6)
+    anchor_normalized = anchor_normalized.view(batch_size, 1, -1)
+    other_normalized = other / (other.norm(dim=1, keepdim=True) + 1e-6)
+    other_normalized = other_normalized.view(1, batch_size, -1)
+    # similarity will be [bs, bs, num_capsules * num_dims] after this.
+    similarity = anchor_normalized * other_normalized
+    # now multiply by the temperature.
+    similarity *= args.nce_presence_temperature
+    # and then sum to get the dot product (cosign similarity).
+    # this is [bs, bs]. the positive samples are on the diagonal.
+    similarity = similarity.sum(2)
+
+    # # NOTE: We change to use pytorch here. Should be the same as ours though ...
+    # similarity = F.cosine_similarity(anchor, other)
+    # print('YO122: ', similarity)
+
+    # the diagonal has the positive similarity = log(exp(sim(x, y)))
+    identity = torch.eye(batch_size).to(similarity.device)
+    positive_similarity = (similarity * identity).sum(1)
+    
+    # we get the total similarity by taking the logsumexp of similarity.
+    log_sum_total = torch.logsumexp(similarity, dim=1)
+    diff = positive_similarity - log_sum_total
+    nce = -diff.mean()
+    
+    total_similarity = similarity.sum(1)
+    negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
+    positive_similarity = positive_similarity.mean().item()
+    
+    loss = nce * args.nce_presence_lambda
+    stats = {}
+    stats.update({
+        'pos_sim_presence': positive_similarity,
+        'neg_sim_presence': negative_similarity,
+        'nce_presence': nce.item()            
+    })
+    return loss, stats
+
+
+def get_probs_test_loss(model, images, device, epoch, args):
+    path = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/probstst.images%d-%d.%.4f.png'
+    if epoch == 0:
+        for num_set in range(15):
+            for num_img in range(images.shape[1]):
+                img = images[num_set, num_img].cpu().numpy()
+                img = (img * 255).astype(np.uint8).squeeze()
+                imgpil = Image.fromarray(img)
+                path_ = path % (num_set, num_img, args.step_length)
+                imgpil.save(path_)
+
+    batch_size, num_images = images.shape[:2]
+
+    # Change view so that we can put everything through the model at once.
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    probs = model(images)
+
+    probs_sum1 = probs.sum(dim=1, keepdim=True) + 1e-8
+    within_presence = probs / probs_sum1 + 1e-8
+    within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+    within_entropy = within_entropy.sum(1)
+    within_entropy = within_entropy.mean()
+
+    probs_sum0 = probs.sum(dim=0) + 1e-8
+    probs_sum0_distr = probs_sum0 / probs_sum0.sum(0)
+    between_entropy = -probs_sum0_distr * torch.log(probs_sum0_distr) / np.log(2)
+    between_entropy = between_entropy.mean(0)
+
+    stats = {}
+    stats['within_entropy'] = within_entropy.item()
+    stats['between_entropy'] = between_entropy.item()
+    max_values, _ = torch.max(probs, 1)
+    min_values, _ = torch.min(probs, 1)
+    stats['mean_max_prob'] = max_values.mean().item()
+    stats['mean_min_prob'] = min_values.mean().item()
+    stats['mean_prob'] = probs.mean().item()
+
+    probs = probs.view(batch_size, num_images, *probs.shape[1:])
+
+    loss = 0
+
+    if args.use_simclr_nce:
+        loss_nce, stats_nce = _do_simclr_nce(probs, args)
+    else:
+        loss_nce, stats_nce = _do_our_nce(probs, args)
+
+    loss += loss_nce
+    stats.update(stats_nce)
     return loss, stats

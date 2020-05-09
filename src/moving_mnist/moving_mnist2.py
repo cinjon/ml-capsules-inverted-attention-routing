@@ -7,9 +7,12 @@ import random
 
 import h5py
 import numpy as np
+from PIL import Image
 import torch
 import torch.utils.data as data
 from torchvision.datasets.utils import download_url, makedir_exist_ok
+from torchvision.transforms import RandomResizedCrop, ColorJitter, RandomApply, \
+    Compose, RandomHorizontalFlip, ToPILImage, ToTensor
 
 
 class MovingMNISTClassSampler(data.Sampler):
@@ -73,10 +76,25 @@ class MovingMNIST(data.Dataset):
                  is_triangle_loss=False, is_reorder_loss=False,
                  num_digits=2, one_data_loop=False,
                  center_start=False, step_length=0.035,
-                 positive_ratio=0.5, single_angle=False):
+                 positive_ratio=0.5, single_angle=False,
+                 use_simclr_xforms=False,
+                 use_diff_class_digit=False):
         self.root = root
         self.is_triangle_loss = is_triangle_loss
         self.is_reorder_loss = is_reorder_loss
+        self.use_simclr_xforms = train and use_simclr_xforms
+        # If use_diff_class_digit, then we use a diff digit from the same class
+        # for every position.
+        self.use_diff_class_digit = use_diff_class_digit
+        if self.use_simclr_xforms:
+            self.xforms = Compose([
+                ToPILImage(),
+                RandomResizedCrop(image_size, scale=(0.8, 1.0), # NOTE: was (0.08, 1)
+                                  ratio=(0.75, 1.333), interpolation=2),
+                RandomHorizontalFlip(p=0.5),
+                # RandomApply([ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8),
+                ToTensor()
+            ])
 
         data, labels = self.load_dataset(train)
         self.labels = labels
@@ -89,7 +107,9 @@ class MovingMNIST(data.Dataset):
             is_reorder_loss=is_reorder_loss,
             num_digits=num_digits, step_length=step_length,
             train=train, center_start=center_start, single_angle=single_angle,
-            positive_ratio=positive_ratio)
+            positive_ratio=positive_ratio,
+            use_diff_class_digit=use_diff_class_digit
+        )
 
         if one_data_loop:
             self.data_size = len(data)
@@ -137,12 +157,25 @@ class MovingMNIST(data.Dataset):
 
     def __getitem__(self, index):
         datum, label = self.data_handler.get_item()
-        datum = torch.from_numpy(datum)
+        # datum is [3 1, 64, 64]
+        if self.use_simclr_xforms:
+            datum = transform(datum, self.xforms)
+        else:
+            datum = torch.from_numpy(datum)
         label = torch.from_numpy(np.array(label))
         return datum, label
 
     def __len__(self):
         return self.data_size
+
+
+def transform(arr, transforms):
+    tensors = []
+    for npimg in arr:
+        npimg = npimg.transpose((1, 2, 0))
+        tensor = transforms(npimg)
+        tensors.append(tensor)
+    return torch.stack(tensors)
 
 
 class _BouncingMNISTDataHandler(object):
@@ -152,7 +185,7 @@ class _BouncingMNISTDataHandler(object):
                  output_image_size=64, is_triangle_loss=False,
                  is_reorder_loss=False, num_digits=2,
                  step_length=0.035, train=False, center_start=False,
-                 single_angle=False, positive_ratio=0.5):
+                 single_angle=False, positive_ratio=0.5, use_diff_class_digit=False):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = 64
@@ -167,6 +200,7 @@ class _BouncingMNISTDataHandler(object):
         self.labels_ = labels
 
         self.indices_ = np.arange(self.data_.shape[0])
+
         self.row_ = 0
         self.is_triangle_loss = is_triangle_loss
         self.is_reorder_loss = is_reorder_loss
@@ -176,6 +210,16 @@ class _BouncingMNISTDataHandler(object):
         self.positive_ratio = positive_ratio
         if train:
             np.random.shuffle(self.indices_)
+
+        self.use_diff_class_digit = use_diff_class_digit
+        if use_diff_class_digit:
+            index_by_label = defaultdict(list)
+            self.index_rows = {}
+            for index in self.indices_:
+                label = labels[index]
+                index_by_label[int(label)].append(index)
+                self.index_rows[int(label)] = 0
+            self.index_by_label = index_by_label
 
     def get_dims(self):
         return self.frame_size_
@@ -274,17 +318,32 @@ class _BouncingMNISTDataHandler(object):
                 self.row_ = 0
                 if self.train:
                     np.random.shuffle(self.indices_)
+
             digit_image = self.data_[ind, :, :]
             label.append(self.labels_[ind])
 
             # generate video
+            labels_used = [label[-1]]                
             for i in range(self.seq_length_):
+                if i > 0 and self.use_diff_class_digit:
+                    index_label = int(label[-1])
+                    label_indices = self.index_by_label[index_label]
+                    if self.index_rows[index_label] == len(label_indices):
+                        self.index_rows[index_label] = 0
+                    index_row = self.index_rows[index_label]
+                    next_data_index = label_indices[index_row]
+                    digit_image = self.data_[next_data_index, :, :]
+                    self.index_rows[index_label] += 1
+                    labels_used.append(self.labels_[next_data_index])
+
                 top = start_y[i, n]
                 left = start_x[i, n]
                 bottom = top + self.digit_size_
                 right = left + self.digit_size_
                 data[i, top:bottom, left:right] = self.overlap(
                     data[i, top:bottom, left:right], digit_image)
+
+            # print('Yo: ', labels_used)
 
         data = data[:, None, :, :]
         # These come out as [seq_len, 3, 64, 64]
@@ -310,7 +369,6 @@ class _BouncingMNISTDataHandler(object):
                 else:
                     data = np.stack([data[1], data[4], data[3]])
                 label = 0.
-
 
         if self.output_image_size == self.image_size_:
             ret = data
@@ -348,6 +406,14 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
 
             # generate video
             for i in range(self.seq_length_):
+                if i > 0 and self.use_diff_class_digit:
+                    index_label = int(self.labels_[ind])
+                    if self.index_rows[index_label] == len(self.index_by_label[index_label]):
+                        self.index_rows[index_label] = 0
+                    index_row = self.index_rows[index_label]
+                    digit_image = self.data_[index_row, :, :]
+                    self.index_rows[index_label] += 1
+
                 top = start_y[i, n]
                 left = start_x[i, n]
                 bottom = top + self.digit_size_

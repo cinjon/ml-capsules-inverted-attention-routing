@@ -103,6 +103,7 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
     model_orig_poses = []
     model_presence = []
     targets = []
+    presence_class_probs = None
 
     with torch.no_grad():
         for loader, split in zip([train_loader, test_loader], ['train', 'test']):
@@ -127,17 +128,35 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                 images = images.view(batch_size * num_images, *images.shape[2:])
                 poses = model(images)
                 if type(poses) == tuple:
-                    poses, presence = poses
-                    orig_poses = poses
+                    if len(poses) == 2:
+                        poses, presence = poses
+                        poses = poses.view(batch_size, num_images, *poses.shape[1:])
+                        poses = poses[:, 0]
+                        presence = presence.view(batch_size, num_images, *presence.shape[1:])
+                        presence = presence[:, 0]
+                    elif len(poses) == 3:
+                        poses, presence, presence_class_probs = poses
+                        poses = poses.view(batch_size, num_images, *poses.shape[1:])
+                        poses = poses[:, 0]
+                        presence = presence.view(batch_size, num_images, *presence.shape[1:])
+                        presence = presence[:, 0]
+                        presence_class_probs = presence_class_probs.view(batch_size, num_images, *presence_class_probs.shape[1:])
+                        presence_class_probs = presence_class_probs[:, 0]
+                    else:
+                        raise
+                    orig_poses = poses.cpu()
                     poses *= presence[:, :, None]
+                    presence = presence.cpu()
+                    model_orig_poses.append(orig_poses.view(batch_size, -1))
+                    model_presence.append(presence.view(batch_size, -1))
+                else:
+                    poses = poses.view(batch_size, num_images, *poses.shape[1:])
+                    poses = poses[:, 0]
+
                 poses = poses.cpu()
-                orig_poses = orig_poses.cpu()
-                presence = presence.cpu()
                 images = images.cpu()
                 del images
                 model_poses.append(poses.view(batch_size, -1))
-                model_orig_poses.append(orig_poses.view(batch_size, -1))
-                model_presence.append(presence.view(batch_size, -1))
                 targets.append(labels)
                 # orig_images.append(images.view(batch_size, -1))
 
@@ -146,10 +165,12 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
             torch.cuda.empty_cache()
             model_poses = torch.cat(model_poses, 0)
             model_poses = model_poses.numpy()
-            model_orig_poses = torch.cat(model_orig_poses, 0)
-            model_orig_poses = model_orig_poses.numpy()
-            model_presence = torch.cat(model_presence, 0)
-            model_presence = model_presence.numpy()
+            if model_orig_poses:
+                model_orig_poses = torch.cat(model_orig_poses, 0)
+                model_orig_poses = model_orig_poses.numpy()
+            if model_presence:
+                model_presence = torch.cat(model_presence, 0)
+                model_presence = model_presence.numpy()
             targets = torch.cat(targets, 0)
             targets = targets.numpy().squeeze()
 
@@ -160,22 +181,62 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                 if key == 'images':
                     continue
 
+                if not len(x):
+                    continue
+
+                len_x = len(x)
+                newx = []
+                newtargets = []
+                row1 = 0
+                for rownum in range(len(x)):
+                    row = x[rownum]
+                    found = False
+                    for newxrow in newx:
+                        if all(newxrow == row):
+                            found = True
+                            break
+                    if not found:
+                        newx.append(row)
+                        newtargets.append(targets[rownum])
+
+                newx = np.array(newx)
+                newtargets = np.array(newtargets)
                 print('TSNEing the %s %s (%d)...' % (split, key, epoch))
+                print('Orig len is %d / set length is %d / %d' % (len_x, len(newx), len(newtargets)))
+
                 # embeddings = multiTSNE(
                 #     n_jobs=4, n_components=2, perplexity=30, learning_rate=100.0
                 # ).fit_transform(x)
                 if use_cuda_tsne:
                     embeddings = cudaTSNE(
                         n_components=2, perplexity=30, learning_rate=100.0
-                    ).fit_transform(x)
+                    ).fit_transform(newx)
                 else:
                     embeddings = TSNE(
                         n_components=2, perplexity=30, learning_rate=100.0
-                    ).fit_transform(x)
+                    ).fit_transform(newx)
 
                 vis_x = embeddings[:, 0]
                 vis_y = embeddings[:, 1]
-                plt.scatter(vis_x, vis_y, c=targets, cmap=plt.cm.get_cmap("jet", 10), marker='.')
+                print(vis_x)
+                print(vis_y)
+                print(vis_x.shape, vis_y.shape, epoch)
+                if any(np.isnan(vis_x)) or any(np.isnan(vis_y)):
+                    print('\n***\n')
+                    print('Nan!: ', key, np.isnan(x).any())
+                    print(x)
+                    print(newx)
+                    if not np.isnan(x).any():
+                        path_ = os.path.join(
+                            path, 'tsnenan.%s.%s.%s.%03f.npy' % (
+                                suffix, key, split, epoch)
+                        )
+                        with open(path_, 'wb') as f:
+                            np.save(f, x)
+                    print('\n***\n')
+                else:
+                    print('Carry on...')
+                plt.scatter(vis_x, vis_y, c=newtargets, cmap=plt.cm.get_cmap("jet", 10), marker='.')
                 plt.colorbar(ticks=range(10))
                 plt.clim(-0.5, 9.5)
                 path_ = os.path.join(path, 'tsne.%s.%s.%s%03d.png' % (
@@ -189,7 +250,7 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                     elif split == 'test':
                         with comet_exp.test():
                             comet_exp.log_image(path_)
-                    os.remove(path_)
+                    # os.remove(path_)
 
             model_poses = []
             model_orig_poses = []
@@ -245,7 +306,9 @@ def get_loaders(args, rank=0):
                                  center_start=args.fix_moving_mnist_center,
                                  single_angle=args.fix_moving_mnist_angle,
                                  step_length=args.step_length,
-                                 positive_ratio=args.positive_ratio)
+                                 positive_ratio=args.positive_ratio,
+                                 use_simclr_xforms=args.use_simclr_xforms,
+                                 use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'])
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
                                 image_size=64, colored=args.colored, tiny=False,
                                 is_triangle_loss='triangle' in args.criterion,
@@ -254,7 +317,8 @@ def get_loaders(args, rank=0):
                                 center_start=args.fix_moving_mnist_center,
                                 single_angle=args.fix_moving_mnist_angle,
                                 step_length=args.step_length,
-                                positive_ratio=args.positive_ratio)
+                                positive_ratio=args.positive_ratio,
+                                use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'])
         # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
             args.affnist_root, train=False, subset=args.affnist_subset,
@@ -700,7 +764,34 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
-
+        elif criterion in ['discriminative_probs']:
+            images = images[:, [0, 2]]
+            images = images.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+            loss, stats = capsule_time_model.get_discriminative_probs(
+                net, images, labels, device, epoch, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+        elif criterion in ['probs_test']:
+            images = images.cuda(device)
+            loss, stats = capsule_time_model.get_probs_test_loss(
+                net, images, device, epoch, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+            
         loss.backward()
 
         total_norm = 0.
@@ -750,7 +841,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
     return train_loss, train_acc, step
 
 
-def test(epoch, step, net, criterion, loader, args, device, store_dir=None, comet_exp=None):
+def test(epoch, step, net, criterion, loader, args, device, store_dir=None, comet_exp=None, is_affnist=False):
     net.eval()
 
     averages = {
@@ -760,7 +851,6 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
     t = time.time()
     with torch.no_grad():
         for batch_idx, (images, labels) in enumerate(loader):
-
             if criterion == 'triplet':
                 # NOTE: Zeping.
                 images = images.cuda(device)
@@ -859,6 +949,34 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
+            elif criterion in ['discriminative_probs']:
+                if not is_affnist:
+                    images = images[:, [0, 2]]
+                images = images.cuda(device)
+                labels = labels.squeeze()
+                labels = labels.cuda(device)
+                loss, stats = capsule_time_model.get_discriminative_probs(
+                    net, images, labels, device, epoch, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
+            elif criterion in ['probs_test']:
+                images = images.cuda(device)
+                loss, stats = capsule_time_model.get_probs_test_loss(
+                    net, images, device, epoch, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
             if comet_exp and batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -907,13 +1025,23 @@ def main(gpu, args, port=12355):
 
     print('==> Building model..')
     num_frames = 4 if args.criterion == 'reorder2' else 3
-    is_discriminating_model = not ('reorder' in args.criterion or 'triangle' in args.criterion)
+    is_discriminating_model = all([
+        'reorder' not in args.criterion, 'triangle' not in args.criterion,
+        args.criterion != 'discriminative_probs'
+    ])
+        
     if args.use_resnet:
         if args.criterion not in ['reorder', 'reorder2']:
             raise
         net = ReorderResNet(resnet_type=args.resnet_type, pretrained=args.resnet_pretrained)
+    elif args.criterion == 'probs_test':
+        net = capsule_time_model.ProbsTest(
+            64, config['params']['class_capsules']['num_caps'],
+            temperature=args.presence_temperature,
+            use_noise=args.use_rand_presence_noise)
     else:
-        do_capsule_computation = args.criterion != 'triangle_margin2_angle_nce' or \
+        do_capsule_computation = args.criterion not in [
+            'triangle_margin2_angle_nce', 'discriminative_probs'] or \
             args.use_nce_loss or args.use_hinge_loss or args.use_angle_loss
         net = capsule_time_model.CapsTimeModel(
             config['params'],
@@ -926,7 +1054,8 @@ def main(gpu, args, port=12355):
             use_presence_probs=args.use_presence_probs,
             presence_temperature=args.presence_temperature,
             presence_loss_type=args.presence_loss_type,
-            do_capsule_computation=do_capsule_computation
+            do_capsule_computation=do_capsule_computation,
+            do_discriminative_probs=args.criterion == 'discriminative_probs'
         )
 
     if args.optimizer == 'adam':
@@ -958,7 +1087,7 @@ def main(gpu, args, port=12355):
                                  str(args.counter), today)
     else:
         store_dir = os.path.join(args.results_dir, today)
-    if not os.path.isdir(store_dir) and not args.debug:
+    if gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
     torch.cuda.set_device(gpu)
@@ -1017,10 +1146,25 @@ def main(gpu, args, port=12355):
     # affnist_loss, affnist_acc = test(0, net, args.criterion, affnist_test_loader, args, best_negative_distance, device, store_dir=store_dir)
     # print('Before starting affnist_acc: ', affnist_acc)
 
+
     step = 0
     last_test_loss = 1e8
     last_saved_epoch = 0
     device = gpu
+
+    # if gpu == 0 and 'triangle' not in args.criterion and \
+    #    args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1']:
+    #     affnist_loss, affnist_acc = test(
+    #         0, step, net, args.criterion, affnist_test_loader, args,
+    #         device, store_dir=store_dir, comet_exp=comet_exp, is_affnist=True)
+
+    # if gpu == 0:
+    #     run_tsne(
+    #         args.data_root, net, store_dir, 0, use_moving_mnist=True,
+    #         comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
+    #         single_angle=args.fix_moving_mnist_angle,
+    #         use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
+
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer, args.criterion, train_loader, args, device, comet_exp)
@@ -1034,8 +1178,10 @@ def main(gpu, args, port=12355):
         if scheduler:
             scheduler.step()
 
-        if epoch % 5 == 0 and gpu == 0:
-            test_loss, test_acc = test(epoch, step, net, args.criterion, test_loader, args, device, store_dir=store_dir, comet_exp=comet_exp)
+        if epoch % 3 == 0 and gpu == 0:
+            test_loss, test_acc = test(
+                epoch, step, net, args.criterion, test_loader, args, device,
+                store_dir=store_dir, comet_exp=comet_exp)
             # if test_acc is not None:
             #     print('Test Acc %.4f.' % test_acc)
             #     results['test_acc'].append(test_acc)
@@ -1056,12 +1202,18 @@ def main(gpu, args, port=12355):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-        if gpu == 0 and 'triangle' not in args.criterion and \
-           args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
-           test_acc >= .975 and train_acc >= .975 and epoch > 0:
-            print('\n***\nRunning affnist...')
-            affnist_loss, affnist_acc = test(epoch, net, args.criterion, affnist_test_loader, args, device, store_dir=store_dir)
-            results['affnist_acc'].append(affnist_acc)
+            print('test_acc: ', test_acc, test_loss)
+            print('trainacc: ', train_acc, train_loss)
+            if gpu == 0 and 'triangle' not in args.criterion and \
+               'probs_test' not in args.criterion and \
+               args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
+               test_acc >= .95 and train_acc >= .95 and epoch > 0:
+                print('\n***\nRunning affnist...')
+                affnist_loss, affnist_acc = test(
+                    epoch, step, net, args.criterion, affnist_test_loader, args,
+                    device, store_dir=store_dir, comet_exp=comet_exp, is_affnist=True)
+                results['affnist_acc'].append(affnist_acc)
+                print('AFFNIST Results: ', affnist_loss, affnist_acc)
 
         if comet_exp:
             comet_exp.log_epoch_end(epoch)
@@ -1153,6 +1305,9 @@ if __name__ == '__main__':
                         type=str,
                         help='dataset: MovingMNist and a host of gymnastics ones.')
     parser.add_argument('--use_class_sampler',
+                        action='store_true',
+                        help='whether to use the class sampler with MovingMNist2')
+    parser.add_argument('--use_diff_class_digit',
                         action='store_true',
                         help='whether to use the class sampler with MovingMNist2')
     parser.add_argument('--backbone',
@@ -1296,6 +1451,8 @@ if __name__ == '__main__':
                         default=1.,
                         type=float,
                         help='the lambda on the presence L1.')
+    parser.add_argument('--use_rand_presence_noise',
+                        action='store_true')
     parser.add_argument(
         '--presence_loss_type',
         default='sigmoid_l1',
@@ -1313,10 +1470,17 @@ if __name__ == '__main__':
                         default=False,
                         action='store_true',
                         help='whether to use the nce loss in triangle_nce')
+    parser.add_argument('--use_simclr_xforms',
+                        action='store_true',
+                        help='whether to use the transforms')
     parser.add_argument('--use_nce_probs',
                         default=False,
                         action='store_true',
                         help='whether to use the nce over the presence probs')
+    parser.add_argument('--use_simclr_nce',
+                        default=False,
+                        action='store_true',
+                        help='whether to use the simclr nce or ours.')
     parser.add_argument('--num_output_classes',
                         default=10,
                         type=float,
