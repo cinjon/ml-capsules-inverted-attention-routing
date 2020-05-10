@@ -8,6 +8,8 @@ When you want to add more jobs just put them below and MAKE SURE that all of the
 do_jobs for the ones above are False.
 """
 from run_on_cluster import do_jobarray
+import socket
+hostname = socket.gethostname()
 
 email = 'cinjon@nyu.edu'
 code_directory = '/home/resnick/Code/ml-capsules-inverted-attention-routing'
@@ -1237,7 +1239,7 @@ def run(find_counter=None):
     time = 3
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1256,7 +1258,188 @@ def run(find_counter=None):
     time = 3
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here, we keep the nce_presence_temperature at 1.0 but change hte probs
+    # test temperature to be higher. We do this w/ and w/o the rand noise
+    # Counter:  379
+    num_gpus = 2
+    job.update({
+        'nce_presence_temperature': 1.0
+    })
+    var_arrays = {
+        'presence_temperature': [3.0, 10.0],
+        'use_rand_presence_noise': [True, False]
+    }
+    time = 3
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the probs NCE with the temp changes plus also add in angle loss. Note
+    # that we have to lower the batch size to accommodate because there are 3
+    # images now.
+    # NOTE: FUck I'm dumb. This is NOT doing use_diff_class_digits.
+    # It might actually work if we did the right thing ....
+    # May 10th --> Changing it to be the right thing. (also cominbing it with below)
+    # Counter:  383
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': False,
+        'use_nce_probs': True,
+        'use_presence_probs': True,
+        'criterion': 'triangle_margin2_angle_nce',
+        'name': '2020.05.09',
+        'use_rand_presence_noise': True,
+        'use_diff_class_digit': True,
+        'presence_loss_type': 'sigmoid_only',
+        'batch_size': 20,
+    })
+    var_arrays = {
+        'nce_presence_temperature': [0.1],
+        'presence_temperature': [1.0, 10.0],
+        'no_use_hinge_loss': [True, False]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the probs NCE with the temp changes plus also add in angle loss AND
+    # hinge loss. Note that we hd to lower the batsh size again.
+    # Counter:  387
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': False,
+        'no_use_hinge_loss': False,
+        'use_nce_probs': True,
+        'use_presence_probs': True,
+        'criterion': 'triangle_margin2_angle_nce',
+        'name': '2020.05.09',
+        'use_rand_presence_noise': True,
+        'use_diff_class_digit': True,
+        'presence_loss_type': 'sigmoid_only',
+        'batch_size': 32, # 32 on dgx... TODO: we haven't done 387!
+        'margin_gamma2': 0.1,
+    })
+    var_arrays = {
+        'nce_presence_temperature': [0.5, 0.1],
+        'presence_temperature': [1.0, 10.0]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Ugh, I never actually lowered the temp below 0.5 to try that out and get the
+    # value more spread. 
+    # Counter:  391
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': True,
+        'criterion': 'triangle_margin2_angle_nce',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.10',
+        'use_simclr_xforms': False,
+        'use_simclr_nce': True,
+        'presence_loss_type': 'sigmoid_only',
+        'use_diff_class_digit': True
+    })
+    var_arrays = {
+        'step_length': [0.035, 0.1],
+        'nce_presence_temperature': [0.3, 0.1]
+    }
+    time = 5
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Temp = 0.1 and step_length0.035 worked really well. Can we relax the
+    # fixed properties now?
+    # Counter:  395
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': True,
+        'criterion': 'triangle_margin2_angle_nce',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 1e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'lambda_within_entropy': 1.0,
+        'use_class_sampler': False,
+        'name': '2020.05.10',
+        'use_simclr_xforms': False,
+        'use_simclr_nce': True,
+        'presence_loss_type': 'sigmoid_only',
+        'use_diff_class_digit': True,
+        'step_length': 0.035,
+        'nce_presence_temperature': 0.1,
+    })
+    # NOTE When both of these are false, it works. When angle is false and
+    # center is true, it works. But when angle is true and center is false,
+    # it ... does not? Ok, but that's what I care about anyways, so fuck it lulz.
+    var_arrays = {
+        'fix_moving_mnist_angle': [False, True],
+        'fix_moving_mnist_center': [False, True]
+    }
+    time = 5
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+    # Doing ncelinear_maxfirst.
+    # Counter:  399
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'name': '2020.05.10',
+        'nceprobs_selection': 'ncelinear_maxfirst'
+    })
+    var_arrays = {
+        'fix_moving_mnist_angle': [False, True],
+        'nceprobs_selection_temperature': [1., 0.5]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 

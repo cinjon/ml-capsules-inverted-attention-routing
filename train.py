@@ -300,7 +300,7 @@ def get_loaders(args, rank=0):
     elif args.dataset == 'MovingMNist2':
         train_set = MovingMNist2(args.data_root, train=True, seq_len=5,
                                  image_size=64, colored=args.colored, tiny=False,
-                                 is_triangle_loss='triangle' in args.criterion,
+                                 is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
                                  is_reorder_loss='reorder' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center,
@@ -311,7 +311,7 @@ def get_loaders(args, rank=0):
                                  use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'])
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
                                 image_size=64, colored=args.colored, tiny=False,
-                                is_triangle_loss='triangle' in args.criterion,
+                                is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
                                 is_reorder_loss='reorder' in args.criterion,
                                 num_digits=args.num_mnist_digits,
                                 center_start=args.fix_moving_mnist_center,
@@ -379,14 +379,14 @@ def get_loaders(args, rank=0):
         train_set = MovingMNist2(args.data_root, train=True, seq_len=1, image_size=64,
                                  colored=args.colored, tiny=False,
                                  one_data_loop=True,
-                                 is_triangle_loss='triangle' in args.criterion,
+                                 is_three_images='triangle' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center,
                                  single_angle=args.fix_moving_mnist_angle)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=1, image_size=64,
                                 colored=args.colored, tiny=False,
                                 one_data_loop=True,
-                                is_triangle_loss='triangle' in args.criterion,
+                                is_three_images='triangle' in args.criterion,
                                 num_digits=args.num_mnist_digits,
                                 center_start=args.fix_moving_mnist_center,
                                 single_angle=args.fix_moving_mnist_angle)
@@ -764,6 +764,18 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
+        elif criterion in ['nceprobs_selective']:
+            images = images.cuda(device)
+            loss, stats = capsule_time_model.get_nceprobs_selective_loss(
+                net, images, device, epoch, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
         elif criterion in ['discriminative_probs']:
             images = images[:, [0, 2]]
             images = images.cuda(device)
@@ -949,6 +961,18 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
+            elif criterion in ['nceprobs_selective']:
+                images = images.cuda(device)
+                loss, stats = capsule_time_model.get_nceprobs_selective_loss(
+                    net, images, device, epoch, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
             elif criterion in ['discriminative_probs']:
                 if not is_affnist:
                     images = images[:, [0, 2]]
@@ -1027,7 +1051,8 @@ def main(gpu, args, port=12355):
     num_frames = 4 if args.criterion == 'reorder2' else 3
     is_discriminating_model = all([
         'reorder' not in args.criterion, 'triangle' not in args.criterion,
-        args.criterion != 'discriminative_probs'
+        args.criterion != 'discriminative_probs',
+        args.criterion != 'nceprobs_selective'
     ])
         
     if args.use_resnet:
@@ -1205,7 +1230,7 @@ def main(gpu, args, port=12355):
             print('test_acc: ', test_acc, test_loss)
             print('trainacc: ', train_acc, train_loss)
             if gpu == 0 and 'triangle' not in args.criterion and \
-               'probs_test' not in args.criterion and \
+               'probs_test' not in args.criterion and 'selective' not in args.criterion and \
                args.dataset in ['affnist', 'MovingMNist2', 'MovingMNist2.img1'] and \
                test_acc >= .95 and train_acc >= .95 and epoch > 0:
                 print('\n***\nRunning affnist...')
@@ -1375,6 +1400,13 @@ if __name__ == '__main__':
                         type=float,
                         help='lambda on the nce loss.')
     parser.add_argument('--nce_presence_lambda',
+                        default=1.0,
+                        type=float,
+                        help='lambda on the nce loss.')
+    parser.add_argument('--nceprobs_selection',
+                        type=str,
+                        help='type of selection strategy for nceprobs.')
+    parser.add_argument('--nce_selection_lambda',
                         default=1.0,
                         type=float,
                         help='lambda on the nce loss.')

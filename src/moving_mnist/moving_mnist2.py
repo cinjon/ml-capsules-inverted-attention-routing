@@ -73,14 +73,14 @@ class MovingMNISTClassSampler(data.Sampler):
 class MovingMNIST(data.Dataset):
     def __init__(self, root, train=True, seq_len=20, skip=1,
                  image_size=64, colored=True, tiny=False,
-                 is_triangle_loss=False, is_reorder_loss=False,
+                 is_three_images=False, is_reorder_loss=False,
                  num_digits=2, one_data_loop=False,
                  center_start=False, step_length=0.035,
                  positive_ratio=0.5, single_angle=False,
                  use_simclr_xforms=False,
                  use_diff_class_digit=False):
         self.root = root
-        self.is_triangle_loss = is_triangle_loss
+        self.is_three_images = is_three_images
         self.is_reorder_loss = is_reorder_loss
         self.use_simclr_xforms = train and use_simclr_xforms
         # If use_diff_class_digit, then we use a diff digit from the same class
@@ -103,7 +103,7 @@ class MovingMNIST(data.Dataset):
             _BouncingMNISTDataHandler
         self.data_handler = handler(
             data, labels, seq_len, skip, image_size,
-            is_triangle_loss=is_triangle_loss,
+            is_three_images=is_three_images,
             is_reorder_loss=is_reorder_loss,
             num_digits=num_digits, step_length=step_length,
             train=train, center_start=center_start, single_angle=single_angle,
@@ -182,7 +182,7 @@ class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
     def __init__(self, data, labels, seq_length=20, skip=1,
-                 output_image_size=64, is_triangle_loss=False,
+                 output_image_size=64, is_three_images=False,
                  is_reorder_loss=False, num_digits=2,
                  step_length=0.035, train=False, center_start=False,
                  single_angle=False, positive_ratio=0.5, use_diff_class_digit=False):
@@ -202,7 +202,7 @@ class _BouncingMNISTDataHandler(object):
         self.indices_ = np.arange(self.data_.shape[0])
 
         self.row_ = 0
-        self.is_triangle_loss = is_triangle_loss
+        self.is_three_images = is_three_images
         self.is_reorder_loss = is_reorder_loss
         self.train = train
         self.center_start = center_start
@@ -347,7 +347,7 @@ class _BouncingMNISTDataHandler(object):
 
         data = data[:, None, :, :]
         # These come out as [seq_len, 3, 64, 64]
-        if self.is_triangle_loss:
+        if self.is_three_images:
             p = random.random()
             # Sample three from somewhere in here, but allow for jumps of two.
             if p > 0.75:
@@ -423,7 +423,7 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
 
         data = np.transpose(data, (0, 3, 1, 2))
         # These come out as [seq_len, 3, 64, 64]
-        if self.is_triangle_loss:
+        if self.is_three_images:
             p = random.random()
             # Sample three from somewhere in here, but allow for jumps of two.
             if p > 0.75:

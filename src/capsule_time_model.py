@@ -770,7 +770,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     if args.use_presence_probs:
         pose, presence_probs = model(images)
         if 'nomul' not in args.presence_loss_type:
-            pose *= presence_probs[:, :, None]
+            pose *= presence_probs[:, :, None]        
     else:
         pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
@@ -799,7 +799,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     # pose[:, 0, :] is [bs, num_capsules, num_dim], presence_probs_image is [bs, ni, num_capsules]
 
     if args.use_nce_probs:
-        nce, stats_ = _do_simclr_nce(presence_probs_image, args)
+        nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
+                                     presence_probs_image)
         loss += nce * args.nce_presence_lambda
         stats.update(stats_)
 
@@ -1267,13 +1268,16 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     return loss, stats
 
 
-def _do_simclr_nce(probs, args):
+def _do_simclr_nce(temperature, probs=None, anchor=None, other=None, suffix='presence'):
     """NOTE: This normalization that happens here should not be applied
-    across capsules, only across probs.
+    across capsules, only across probs or an individiaul capsule.
     """
-    batch_size = probs.shape[0]
-    anchor = probs[:, 0]
-    other = probs[:, 1]
+    if anchor is None:
+        anchor = probs[:, 0]
+    if other is None:
+        other = probs[:, 1]
+
+    batch_size = anchor.shape[0]
     anchor = F.normalize(anchor, dim=1)
     other = F.normalize(other, dim=1)
     representations = torch.cat([other, anchor], dim=0)
@@ -1290,23 +1294,23 @@ def _do_simclr_nce(probs, args):
     l2 = np.eye((2 * batch_size), 2 * batch_size, k=batch_size)
     mask = torch.from_numpy((diag + l1 + l2))
     mask = (1 - mask).type(torch.bool)
-    mask = mask.to(probs.device)
+    mask = mask.to(anchor.device)
 
     negatives = similarity_matrix[mask].view(2*batch_size, -1)
     neg_similarity = negatives.mean()
     pos_similarity = positives.mean()
 
     logits = torch.cat((positives, negatives), dim=1)
-    logits /= args.nce_presence_temperature
+    logits /= temperature
 
     labels = torch.zeros(2 * batch_size).to(anchor.device).long()
     loss = F.cross_entropy(logits, labels, reduction='mean')
     # loss = loss / (2 * batch_size)
 
     stats = {
-        'nce_presence': loss.item(),
-        'pos_sim_presence': pos_similarity.item(),
-        'neg_sim_presence': neg_similarity.item(),
+        'nce_%s' % suffix: loss.item(),
+        'pos_sim_%s' % suffix: pos_similarity.item(),
+        'neg_sim_%s' % suffix: neg_similarity.item(),
     }
     return loss, stats
 
@@ -1396,10 +1400,150 @@ def get_probs_test_loss(model, images, device, epoch, args):
     loss = 0
 
     if args.use_simclr_nce:
-        loss_nce, stats_nce = _do_simclr_nce(probs, args)
+        loss_nce, stats_nce = _do_simclr_nce(args.nce_presence_temperature, probs)
     else:
         loss_nce, stats_nce = _do_our_nce(probs, args)
 
     loss += loss_nce
     stats.update(stats_nce)
+    return loss, stats
+
+
+def get_nceprobs_selective_loss(model, images, device, epoch, args,
+                                num_class_capsules=10):
+    """Get the loss with the nce probs approach.
+
+    We take the nce over the probs. Then we detach those probs and use them in
+    *some* way in order to inform other losses.
+
+    An example would be ncelinear_max, which takes the maximally activated
+    capsule and uses that in *another* nce that tries to make same clips linear
+    and differing clips not linear.
+
+    Another would be ncelinear_thresh, which takes all capsules that are
+    activated above a certain threshold (say .9) in their probs and then does
+    the sum of each of those NCEs.
+    """
+    # Change view so that we can put everything through the model at once.
+    batch_size, num_images = images.shape[:2]
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose, presence_probs = model(images)
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    presence_probs_image = presence_probs.view(
+        batch_size, num_images, -1)
+
+    stats = {}
+    loss = 0.
+
+    # Get the loss for the nce over probs.
+    nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
+                                 presence_probs_image)
+    loss += nce * args.nce_presence_lambda
+    stats.update(stats_)
+
+    presence_probs_image_detached = presence_probs_image.detach()
+    if args.nceprobs_selection == 'ncelinear_maxfirst':
+        # Note We don't know if the maximums are the same across the images.
+        # The expectation is that they *will* be, but that's not obviously true.
+        # So we could do this over *just* the first frame or we could pick a
+        # random frame or we could multiply the probs together. Here we pick
+        # just the first frame in order to make this predictable. Later we can
+        # try other prediction mechanisms.
+        max_indices = torch.argmax(presence_probs_image_detached[:, 0], dim=1)
+        # shape of pose is [bs, nimg, ncaps, ndim], shape of indices is [bs].
+        # Now we want to get the nth index from max_indices from the nth batch
+        # entry and then combine them again.
+        selected_capsules = torch.stack(
+            [pose[num, :, index] for num, index in enumerate(max_indices)]
+        )
+        max_unique, max_counts = torch.unique(max_indices, return_counts=True)
+        max_counts = max_counts.float()
+        max_unique_counts, _ = torch.max(max_counts, 0)
+        mean_unique_counts = torch.mean(max_counts)
+        stats.update({
+            'max_count_maximally_activate_capsule': max_unique_counts.item(),
+            'mean_count_maximally_activate_capsule': mean_unique_counts.item(),
+        })
+        # Shape of selected_capsules is now [bs, ni, 1, capsule_dim]. We seek:
+        # nce(cossim(f_2 - f_0, f_1 - f_0) - cossim(f_2 - f_0, f'_1 - f'_0)).
+        # We can get this by feeding _do_simclr_nce with those two vectors:
+        anchor = selected_capsules[:, 2] - selected_capsules[:, 0]
+        other = selected_capsules[:, 1] - selected_capsules[:, 0]
+        nce_pose, stats_ = _do_simclr_nce(args.nceprobs_selection_temperature,
+                                          anchor=anchor, other=other,
+                                          suffix='selection')
+        loss += nce_pose * args.nce_selection_lambda
+        stats.update(stats_)
+
+        # Get the capsule distance stats.
+        sim_12 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 1, :])
+        sim_23 = torch.dist(selected_capsules[:, 1, :], selected_capsules[:, 2, :])
+        sim_13 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 2, :])
+        cosine_sim_13_12 = F.cosine_similarity(anchor, other).mean()
+        stats.update({
+            'capsule_12_sim': sim_12.item(),
+            'capsule_23_sim': sim_23.item(),
+            'capsule_13_sim': sim_13.item(),
+            'capsule_triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+            'capsule_cosine_sim_13_12': cosine_sim_13_12.item()
+        })
+    elif args.nceprobs_selection == 'ncelinear_threshfirst':
+        pass
+    else:
+        raise
+
+    # Get the probability stats
+    presence_probs_first = presence_probs_image[:, 0]
+    presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
+    within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
+    within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+    within_entropy = within_entropy.sum(1)
+    within_entropy = within_entropy.mean()
+
+    presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
+    presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
+    between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
+    between_entropy = between_entropy.mean(0)
+
+    max_values, _ = torch.max(presence_probs_first, 1)
+    min_values, _ = torch.min(presence_probs_first, 1)
+    mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+    std_per_capsule = [value.item() for value in presence_probs.std(0)]
+    l2_probs_12 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
+    l2_probs_13 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
+    l2_probs_23 = torch.norm(
+        presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
+
+    for num, item in enumerate(mean_per_capsule):
+        stats['capsule_prob_mean_%d' % num] = item
+    for num, item in enumerate(std_per_capsule):
+        stats['capsule_prob_std_%d' % num] = item
+
+    stats.update({
+        'within_entropy': within_entropy.item(),
+        'between_entropy': between_entropy.item(),
+        'mean_max_prob': max_values.mean().item(),
+        'mean_min_prob': min_values.mean().item(),
+        'mean_prob': presence_probs_first.mean().item(),
+        'l2_presence_probs_12': l2_probs_12.item(),
+        'l2_presence_probs_13': l2_probs_13.item(),
+        'l2_presence_probs_23': l2_probs_23.item(),
+    })
+
+    # Get the frame distance stats.
+    sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+    segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    segment_13 = pose[:, 2, :] - pose[:, 0, :]
+    segment_23 = pose[:, 2, :] - pose[:, 1, :]
+    stats.update({
+        'frame_12_sim': sim_12.item(),
+        'frame_23_sim': sim_23.item(),
+        'frame_13_sim': sim_13.item(),
+        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+    })
+
     return loss, stats
