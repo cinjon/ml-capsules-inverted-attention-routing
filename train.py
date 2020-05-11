@@ -47,7 +47,7 @@ from src.resnet_reorder_model import ReorderResNet
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
              single_angle=False, use_cuda_tsne=False, tsne_batch_size=8,
-             num_workers=2):
+             num_workers=2, image_size=64):
     # from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     # NOTE: Use this when it's the only thing on the GPU.
@@ -58,13 +58,13 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
 
     if use_moving_mnist:
         train_set = MovingMNist2(data_root, train=True, seq_len=1,
-                                 image_size=64, colored=False, tiny=False,
-                                 num_digits=1, one_data_loop=True,
+                                 image_size=image_size, colored=False,
+                                 tiny=False, num_digits=1, one_data_loop=True,
                                  center_start=center_start,
                                  single_angle=single_angle)
         test_set = MovingMNist2(data_root, train=False, seq_len=1,
-                                image_size=64, colored=False, tiny=False,
-                                num_digits=1, one_data_loop=True,
+                                image_size=image_size, colored=False,
+                                tiny=False, num_digits=1, one_data_loop=True,                                
                                 center_start=center_start,
                                 single_angle=single_angle)
         suffix = 'movmnist64.pfix%d.afix%d' % (int(center_start), int(single_angle))
@@ -298,8 +298,11 @@ def get_loaders(args, rank=0):
                                                   num_workers=args.num_workers)
         affnist_test_loader = None
     elif args.dataset == 'MovingMNist2':
-        train_set = MovingMNist2(args.data_root, train=True, seq_len=5,
-                                 image_size=64, colored=args.colored, tiny=False,
+        # NOTE!!!
+        # data_root = args.affnist_root
+        data_root = args.data_root
+        train_set = MovingMNist2(data_root, train=True, seq_len=5,
+                                 image_size=args.image_size, colored=args.colored, tiny=False,
                                  is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
                                  is_reorder_loss='reorder' in args.criterion,
                                  num_digits=args.num_mnist_digits,
@@ -308,9 +311,10 @@ def get_loaders(args, rank=0):
                                  step_length=args.step_length,
                                  positive_ratio=args.positive_ratio,
                                  use_simclr_xforms=args.use_simclr_xforms,
-                                 use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'])
+                                 use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'],
+                                 is_affnist=False, no_hit_side=args.no_hit_side)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
-                                image_size=64, colored=args.colored, tiny=False,
+                                image_size=args.image_size, colored=args.colored, tiny=False,
                                 is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
                                 is_reorder_loss='reorder' in args.criterion,
                                 num_digits=args.num_mnist_digits,
@@ -318,7 +322,8 @@ def get_loaders(args, rank=0):
                                 single_angle=args.fix_moving_mnist_angle,
                                 step_length=args.step_length,
                                 positive_ratio=args.positive_ratio,
-                                use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'])
+                                use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'],
+                                no_hit_side=args.no_hit_side)
         # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
             args.affnist_root, train=False, subset=args.affnist_subset,
@@ -504,7 +509,6 @@ def get_loaders(args, rank=0):
             fps=args.fps, video_directory=args.gymnastics_video_directory,
             count_videos=args.count_videos, count_clips=args.count_clips
         )
-        print("Batch size: ", args.batch_size)
         train_loader = torch.utils.data.DataLoader(
             train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = torch.utils.data.DataLoader(
@@ -644,6 +648,7 @@ def get_loaders(args, rank=0):
             shuffle=False,
             collate_fn=gymnastics_flow_collate)
 
+    print('Returning data loaders...')
     return train_loader, test_loader, affnist_test_loader
 
 # Training
@@ -964,7 +969,7 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
             elif criterion in ['nceprobs_selective']:
                 images = images.cuda(device)
                 loss, stats = capsule_time_model.get_nceprobs_selective_loss(
-                    net, images, device, epoch, args)
+                    net, images, device, epoch, args, store_dir=store_dir)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -1055,6 +1060,9 @@ def main(gpu, args, port=12355):
         args.criterion != 'nceprobs_selective'
     ])
         
+    do_capsule_computation = args.criterion not in [
+        'triangle_margin2_angle_nce', 'discriminative_probs'] or \
+        args.use_nce_loss or args.use_hinge_loss or args.use_angle_loss
     if args.use_resnet:
         if args.criterion not in ['reorder', 'reorder2']:
             raise
@@ -1065,9 +1073,6 @@ def main(gpu, args, port=12355):
             temperature=args.presence_temperature,
             use_noise=args.use_rand_presence_noise)
     else:
-        do_capsule_computation = args.criterion not in [
-            'triangle_margin2_angle_nce', 'discriminative_probs'] or \
-            args.use_nce_loss or args.use_hinge_loss or args.use_angle_loss
         net = capsule_time_model.CapsTimeModel(
             config['params'],
             args.backbone,
@@ -1123,7 +1128,8 @@ def main(gpu, args, port=12355):
     if args.resume_dir and not args.debug:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
-        checkpoint = torch.load(os.path.join(args.resume_dir, 'ckpt.pth'))
+        checkpoint = torch.load(os.path.join(
+            args.resume_dir, 'ckpt.epoch%d.pth' % args.resume_epoch))
         net.load_state_dict(checkpoint['net'])
         start_epoch = checkpoint['epoch']
 
@@ -1189,6 +1195,21 @@ def main(gpu, args, port=12355):
     #         comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
     #         single_angle=args.fix_moving_mnist_angle,
     #         use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
+
+    if args.linpred_test_only:
+        print('\n***\nStarting MNist Test (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_model(
+            start_epoch, net, args.data_root, args.affnist_root, comet_exp,
+            args.mnist_batch_size, args.colored, args.num_workers,
+            config['params'], args.backbone, args.num_routing, num_frames,
+            args.use_presence_probs, args.presence_temperature,
+            args.presence_loss_type, do_capsule_computation, args.mnist_lr,
+            args.mnist_weight_decay, args.affnist_subset, args.step_length)            
+        print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
+        return
+    # else:
+    #     print('stop being silly.')
+    #     return
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
@@ -1263,7 +1284,9 @@ def main(gpu, args, port=12355):
                 args.data_root, net, store_dir, epoch, use_moving_mnist=True,
                 comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
                 single_angle=args.fix_moving_mnist_angle,
-                use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size)
+                use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size,
+                image_size=args.image_size
+            )
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
         if gpu == 0 and not args.debug:
@@ -1290,6 +1313,8 @@ if __name__ == '__main__':
                         default='',
                         type=str,
                         help='dir where we resume from checkpoint')
+    parser.add_argument('--resume_epoch', type=int, default=None,
+                        help='the checkpoint epoch to resume at')
     parser.add_argument('--no_use_comet',
                         action='store_true',
                         help='use comet or not')
@@ -1335,6 +1360,9 @@ if __name__ == '__main__':
     parser.add_argument('--use_diff_class_digit',
                         action='store_true',
                         help='whether to use the class sampler with MovingMNist2')
+    parser.add_argument('--no_hit_side',
+                        action='store_true',
+                        help='whether to not let the mnist digits hit teh side.')
     parser.add_argument('--backbone',
                         default='resnet',
                         type=str,
@@ -1582,6 +1610,12 @@ if __name__ == '__main__':
                         help='the number of digits to use in moving mnist.')
     parser.add_argument('--step_length', type=float, default=0.035,
                         help='step length in movingmnist2 sequence')
+    parser.add_argument('--image_size', type=int, default=64,
+                        help='what image size to use.')
+
+    # Linpred Info
+    parser.add_argument('--linpred_test_only', action='store_true',
+                        help='whether to only do the linpred test and exit')
 
     # TSNE info
     parser.add_argument('--use_cuda_tsne', action='store_true',
@@ -1611,7 +1645,13 @@ if __name__ == '__main__':
     args.use_hinge_loss = not args.no_use_hinge_loss
     args.use_nce_loss = not args.no_use_nce_loss
 
-    # main(args)
+    # args.linpred_test_only = True
+    # args.resume_epoch = 84
+    # args.resume_dir = os.path.join(
+    #     '/misc/kcgscratch1/ChoGroup/resnick/vidcaps',
+    #     'results/2020.05.10/399/2020-05-10-13-13-06'
+    # )
+    # args.num_gpus = 1
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 
