@@ -1,5 +1,6 @@
 from collections import defaultdict
 import copy
+from glob import glob
 import gzip
 import math
 import os
@@ -8,6 +9,7 @@ import random
 import h5py
 import numpy as np
 from PIL import Image
+from scipy.io.matlab import loadmat
 import torch
 import torch.utils.data as data
 from torchvision.datasets.utils import download_url, makedir_exist_ok
@@ -78,7 +80,8 @@ class MovingMNIST(data.Dataset):
                  center_start=False, step_length=0.035,
                  positive_ratio=0.5, single_angle=False,
                  use_simclr_xforms=False,
-                 use_diff_class_digit=False):
+                 use_diff_class_digit=False,
+                 is_affnist=False, no_hit_side=False):
         self.root = root
         self.is_three_images = is_three_images
         self.is_reorder_loss = is_reorder_loss
@@ -96,19 +99,26 @@ class MovingMNIST(data.Dataset):
                 ToTensor()
             ])
 
-        data, labels = self.load_dataset(train)
+        if is_affnist:
+            data, labels = self.load_affnist(train)
+        else:
+            data, labels = self.load_dataset(train)
+
         self.labels = labels
 
+        digit_size = data.shape[2]
         handler = _ColoredBouncingMNISTDataHandler if colored else \
             _BouncingMNISTDataHandler
         self.data_handler = handler(
-            data, labels, seq_len, skip, image_size,
+            data, labels, seq_len, skip, image_size=image_size,
+            output_image_size=image_size, digit_size=digit_size,
             is_three_images=is_three_images,
             is_reorder_loss=is_reorder_loss,
             num_digits=num_digits, step_length=step_length,
             train=train, center_start=center_start, single_angle=single_angle,
             positive_ratio=positive_ratio,
-            use_diff_class_digit=use_diff_class_digit
+            use_diff_class_digit=use_diff_class_digit,
+            no_hit_side=no_hit_side
         )
 
         if one_data_loop:
@@ -121,6 +131,24 @@ class MovingMNIST(data.Dataset):
             self.data_size = 64 * pow(2, 9) # NOTE: Has been 8 for a long time.
         else:
             self.data_size = 64 * pow(2, 5)
+
+    def load_affnist(self, train):
+        if train:
+            paths = glob(os.path.join(self.root, "training_batches", "*.mat"))
+        else:
+            paths = glob(os.path.join(self.root, "validation_batches", "*.mat"))
+        imgs = []
+        lbls = []
+        for path in paths:
+            data_arr = loadmat(path)["affNISTdata"][0, 0]
+            lbls.append(data_arr[5].flatten())
+            imgs.append(
+                data_arr[2].transpose((1, 0)).reshape((-1, 1, 40, 40)))
+
+        imgs = np.concatenate(imgs)
+        lbls = np.concatenate(lbls)
+        imgs = imgs.astype(np.float) / 255.
+        return imgs, lbls
 
     def load_dataset(self, train):
         img_filename = "train-images-idx3-ubyte.gz" if train\
@@ -181,19 +209,21 @@ def transform(arr, transforms):
 class _BouncingMNISTDataHandler(object):
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, data, labels, seq_length=20, skip=1,
-                 output_image_size=64, is_three_images=False,
+    def __init__(self, data, labels, seq_length=20, skip=1, image_size=64,
+                 output_image_size=64, digit_size=28, is_three_images=False,
                  is_reorder_loss=False, num_digits=2,
                  step_length=0.035, train=False, center_start=False,
-                 single_angle=False, positive_ratio=0.5, use_diff_class_digit=False):
+                 single_angle=False, positive_ratio=0.5, use_diff_class_digit=False,
+                 no_hit_side=False):
         self.seq_length_ = seq_length
         self.skip = skip
-        self.image_size_ = 64
+        self.image_size_ = image_size
         self.output_image_size = output_image_size
         self.num_digits_ = num_digits
         self.step_length_ = step_length # NOTE: was 0.1
+        self.no_hit_side = no_hit_side
 
-        self.digit_size_ = 28
+        self.digit_size_ = digit_size
         self.frame_size_ = self.image_size_ ** 2
 
         self.data_ = data
@@ -232,58 +262,68 @@ class _BouncingMNISTDataHandler(object):
         skip = self.skip
         canvas_size = self.image_size_ - self.digit_size_
 
-        if self.center_start:
-            # NOTE: Trying deterministic here
-            x = [0.5] * num_digits
-            y = [0.5] * num_digits
-        else:
-            # Initial position uniform random inside the box.
-            y = np.random.rand(num_digits)
-            x = np.random.rand(num_digits)
+        counter = 0
+        while 1:
+            counter += 1
+            hit_side = False
+            if self.center_start:
+                # NOTE: Trying deterministic here
+                x = [0.5] * num_digits
+                y = [0.5] * num_digits
+            else:
+                # Initial position uniform random inside the box.
+                y = np.random.rand(num_digits)
+                x = np.random.rand(num_digits)
 
-        # Choose a random velocity.
-        if self.single_angle:
-            theta = np.pi / 2.
-        else:
-            theta = np.random.rand(num_digits) * 2 * np.pi
-        v_y = np.sin(theta)
-        v_x = np.cos(theta)
+            # Choose a random velocity.
+            if self.single_angle:
+                theta = np.pi / 2.
+            else:
+                theta = np.random.rand(num_digits) * 2 * np.pi
+            v_y = np.sin(theta)
+            v_x = np.cos(theta)
 
-        start_y = np.zeros((length, num_digits))
-        start_x = np.zeros((length, num_digits))
-        start_y[0] = y
-        start_x[0] = x
-        for i in range(1, length * skip):
-            # Take a step along velocity.
-            y += v_y * self.step_length_
-            x += v_x * self.step_length_
+            start_y = np.zeros((length, num_digits))
+            start_x = np.zeros((length, num_digits))
+            start_y[0] = y
+            start_x[0] = x
+            for i in range(1, length * skip):
+                # Take a step along velocity.
+                y += v_y * self.step_length_
+                x += v_x * self.step_length_
+                
+                # Bounce off edges.
+                for j in range(num_digits):
+                    if x[j] <= 0:
+                        x[j] = 0
+                        v_x[j] = -v_x[j]
+                        hit_side = True
+                    elif x[j] >= 1.0:
+                        x[j] = 1.0
+                        v_x[j] = -v_x[j]
+                        hit_side = True
 
-            # Bounce off edges.
-            for j in range(num_digits):
-                if x[j] <= 0:
-                    x[j] = 0
-                    v_x[j] = -v_x[j]
-                if x[j] >= 1.0:
-                    x[j] = 1.0
-                    v_x[j] = -v_x[j]
-                if y[j] <= 0:
-                    y[j] = 0
-                    v_y[j] = -v_y[j]
-                if y[j] >= 1.0:
-                    y[j] = 1.0
-                    v_y[j] = -v_y[j]
+                    if y[j] <= 0:
+                        y[j] = 0
+                        v_y[j] = -v_y[j]
+                        hit_side = True
+                    elif y[j] >= 1.0:
+                        y[j] = 1.0
+                        v_y[j] = -v_y[j]
+                        hit_side = True
 
-            if not i % skip == 0:
-                continue
+                if not i % skip == 0:
+                    continue
 
-            index = int(i / skip)
-            start_y[index, :] = y
-            start_x[index, :] = x
+                index = int(i / skip)
+                start_y[index, :] = y
+                start_x[index, :] = x
 
-        # Scale to the size of the canvas.
-        start_y = (canvas_size * start_y).astype(np.int32)
-        start_x = (canvas_size * start_x).astype(np.int32)
-        return start_y, start_x
+            if not hit_side or not self.no_hit_side:
+                # Scale to the size of the canvas.
+                start_y = (canvas_size * start_y).astype(np.int32)
+                start_x = (canvas_size * start_x).astype(np.int32)
+                return start_y, start_x
 
     def overlap(self, a, b):
         """ Put b on top of a."""
@@ -343,8 +383,6 @@ class _BouncingMNISTDataHandler(object):
                 data[i, top:bottom, left:right] = self.overlap(
                     data[i, top:bottom, left:right], digit_image)
 
-            # print('Yo: ', labels_used)
-
         data = data[:, None, :, :]
         # These come out as [seq_len, 3, 64, 64]
         if self.is_three_images:
@@ -371,8 +409,10 @@ class _BouncingMNISTDataHandler(object):
                 label = 0.
 
         if self.output_image_size == self.image_size_:
+            # print('NOT resizing!')
             ret = data
         else:
+            print('YES resizing')
             ret = self.resize(data, self.output_image_size)
 
         return ret, label
