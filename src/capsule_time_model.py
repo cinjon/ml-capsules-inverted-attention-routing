@@ -66,7 +66,7 @@ class CapsTimeModel(nn.Module):
         if use_presence_probs:
             if 'squash' not in presence_loss_type:
                 input_dim = params['backbone']['output_dim']
-                input_dim *= params['backbone']['out_img_size']**2
+                input_dim *= int(params['backbone']['inp_img_size']/2)**2
                 output_dim = params['class_capsules']['num_caps']
                 self.presence_prob_head = nn.Linear(input_dim, output_dim)
 
@@ -150,7 +150,7 @@ class CapsTimeModel(nn.Module):
                 in_d_caps = params['capsules'][-1]['caps_dim']
         else:
             in_n_caps = params['primary_capsules']['num_caps'] * params['primary_capsules']['out_img_size'] *\
-                                                                               params['primary_capsules']['out_img_size']
+                params['primary_capsules']['out_img_size']
             in_d_caps = params['primary_capsules']['caps_dim']
         self.capsule_layers.append(
             layers.CapsuleFCPresenceObject(
@@ -182,7 +182,8 @@ class CapsTimeModel(nn.Module):
 
     def get_presence(self, pre_caps, final_pose):
         if 'squash' not in self.presence_loss_type:
-            logits = self.presence_prob_head(pre_caps.view(pre_caps.shape[0], -1))
+            presence_input = pre_caps.view(pre_caps.shape[0], -1)
+            logits = self.presence_prob_head(presence_input)
 
         if self.presence_loss_type in [
                 'sigmoid_l1', 'sigmoid_only', 'sigmoid_prior_sparsity',
@@ -251,6 +252,8 @@ class CapsTimeModel(nn.Module):
         # [batch_size*num_images, backone['output_dim'],
         #  backbone['output_image_size], backbone['output_image_size']]
         # Lulz, this is 32x the input shape for mnist of [36, 1, 64, 64].
+
+        # precaps is [bs, 128, 20, 20] ... Oh because it's a 40x40
         c = self.pre_caps(x)
         pre_caps_res = c
 
@@ -326,7 +329,11 @@ class CapsTimeModel(nn.Module):
             pose_shape = pose.shape
             out = pose.view(pose_shape[0], -1)
             out = self.mnist_classifier_head(out)
-            return out, pose
+            if self.use_presence_probs:
+                presence_probs = self.get_presence(pre_caps_res, pose.clone())
+                return out, pose, presence_probs
+            else:
+                return out, pose
         elif self.use_presence_probs:
             presence_probs = self.get_presence(pre_caps_res, pose.clone())
             if self.do_discriminative_probs:
@@ -1359,16 +1366,6 @@ def _do_our_nce(probs, args):
 
 
 def get_probs_test_loss(model, images, device, epoch, args):
-    path = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/probstst.images%d-%d.%.4f.png'
-    if epoch == 0:
-        for num_set in range(15):
-            for num_img in range(images.shape[1]):
-                img = images[num_set, num_img].cpu().numpy()
-                img = (img * 255).astype(np.uint8).squeeze()
-                imgpil = Image.fromarray(img)
-                path_ = path % (num_set, num_img, args.step_length)
-                imgpil.save(path_)
-
     batch_size, num_images = images.shape[:2]
 
     # Change view so that we can put everything through the model at once.
@@ -1410,7 +1407,7 @@ def get_probs_test_loss(model, images, device, epoch, args):
 
 
 def get_nceprobs_selective_loss(model, images, device, epoch, args,
-                                num_class_capsules=10):
+                                num_class_capsules=10, store_dir=None):
     """Get the loss with the nce probs approach.
 
     We take the nce over the probs. Then we detach those probs and use them in
@@ -1425,6 +1422,17 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
     the sum of each of those NCEs.
     """
     # Change view so that we can put everything through the model at once.
+    if store_dir:
+        path = os.path.join(store_dir, 'images%d-%d.%03f.png')
+        if epoch == 0 and args.num_routing == 1 and args.nceprobs_selection_temperature == 1:
+            for num_set in range(min(15, images.shape[0])):
+                for num_img in range(images.shape[1]):
+                    img = images[num_set, num_img].cpu().numpy()
+                    img = (img * 255).astype(np.uint8).squeeze()
+                    imgpil = Image.fromarray(img)
+                    path_ = path % (num_set, num_img, args.step_length)
+                    imgpil.save(path_)
+
     batch_size, num_images = images.shape[:2]
     images = images.view(batch_size * num_images, *images.shape[2:])
     pose, presence_probs = model(images)
