@@ -30,6 +30,7 @@ class AffNist(Dataset):
                 data_arr[2].transpose((1, 0)).reshape((-1, 40, 40)))
 
         self.imgs = np.concatenate(self.imgs)
+        self.imgs = self.imgs.astype(np.float) / 255.
         self.lbls = np.concatenate(self.lbls)
 
         self.indices_list = []
