@@ -1443,6 +1443,61 @@ def run(find_counter=None):
     if find_counter and _job:
         return counter, _job
 
+
+    # Doing ncelinear_maxfirst ... with 40x40 and removing the fixed_center
+    # Counter:  403
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 80 if hostname == 'dgx-1' else 32,
+        'name': '2020.05.11',
+        'config': 'resnet_backbone_movingmnist2_20ccgray_img40',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'step_length': 0.035,
+        'image_size': 40,
+        'no_hit_side': True,
+    })
+    var_arrays = {
+        'nceprobs_selection_temperature': [0.8, 1., 1.2],
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # We want to relax the fix_moving_mnist_center so that this can work with
+    # AffNist. It is having trouble w that getting over 45% because it's shifted.
+    # Counter: 406
+    num_gpus = 2
+    job.update({
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'image_size': 64,
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True
+    })
+    var_arrays = {
+        'nceprobs_selection_temperature': [0.8, 1.],
+        'step_length': [0.035, 0.05]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
     return None, None
 
             
