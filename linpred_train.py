@@ -10,6 +10,7 @@ import os
 import json
 import time
 import pickle
+from PIL import Image
 import random
 import argparse
 import numpy as np
@@ -89,11 +90,19 @@ def get_loaders(args=None, data_root=None, batch_size=None):
 
 def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_size,
                   colored, num_workers, config_params, backbone, num_routing,
-                  num_frames, lr, weight_decay, affnist_subset):
+                  num_frames, use_presence_probs, presence_temperature,
+                  presence_loss_type, do_capsule_computation, lr, weight_decay,
+                  affnist_subset, step_length):
+    # Allowed to move the image around.
+    # Lolz. Ok, so when we move the center around but don't move it in the
+    # training, then the accuracy is ... not so hot. We gotta train these with
+    # fix_center turned off. TODO: Redo yo.
     train_set = MovingMNist2(mnist_root, train=True, seq_len=1, image_size=64,
-                             colored=colored, tiny=False, num_digits=1)
+                             colored=colored, tiny=False, num_digits=1,
+                             center_start=False, step_length=step_length)
     test_set = MovingMNist2(mnist_root, train=False, seq_len=1, image_size=64,
-                            colored=colored, tiny=False, num_digits=1)
+                            colored=colored, tiny=False, num_digits=1,
+                            center_start=False, step_length=step_length)
     train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                batch_size=batch_size,
                                                shuffle=True,
@@ -120,6 +129,10 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                                            num_routing,
                                            sequential_routing=False,
                                            num_frames=num_frames,
+                                           use_presence_probs=use_presence_probs,
+                                           presence_temperature=presence_temperature,
+                                           presence_loss_type=presence_loss_type,
+                                           do_capsule_computation=do_capsule_computation,
                                            mnist_classifier_head=True)
 
     optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
@@ -136,6 +149,7 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
 
     start_epoch = 0
     total_epochs = 20
+
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss, train_acc = train(epoch, net, optimizer, train_loader)
         if comet_exp is not None:
@@ -158,8 +172,8 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
             train_acc, test_acc
         )
 
-        if test_acc > .9:
-            affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader)
+        if test_acc > .40:
+            affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader, is_affnist=True)
             test_metrics.update({
                 'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
                 'ssl%d loss/affnist' % ssl_epoch: affnist_loss
@@ -179,7 +193,12 @@ def get_mnist_loss(model, images, labels):
 
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
-    output, poses = model(images, return_mnist_head=True)
+    ret = model(images, return_mnist_head=True)
+    if len(ret) == 3:
+        output, poses, presence_probs = ret
+    else:
+        output, poses = ret
+
     labels = labels.squeeze()
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
@@ -202,9 +221,9 @@ def train(epoch, net, optimizer, loader):
     optimizer.zero_grad()
     device = 'cuda'
     for batch_idx, (images, labels) in enumerate(loader):
+        # 16,1,1,64,64, max=1, min=0, float32
         images = images.to(device)
         labels = labels.to(device)
-
         loss, stats = get_mnist_loss(net, images, labels)
         averages['loss'].add(loss.item())
         for key, value in stats.items():
@@ -231,7 +250,7 @@ def train(epoch, net, optimizer, loader):
     return train_loss, train_acc
 
 
-def test(epoch, net, loader):
+def test(epoch, net, loader, is_affnist=False):
     net.eval()
     averages = {
         'loss': Averager()
@@ -243,6 +262,15 @@ def test(epoch, net, loader):
         for batch_idx, (images, labels) in enumerate(loader):
             images = images.to(device)
             labels = labels.to(device)
+            path = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/movmnist%d.runssl.affn%d.images%d-%d.png'
+            if epoch == 0 or is_affnist:
+                for num_set in range(images.shape[0]):
+                    for num_img in range(images.shape[1]):
+                        img = images[num_set, num_img].cpu().numpy()
+                        img = (img * 255).astype(np.uint8).squeeze()
+                        imgpil = Image.fromarray(img)
+                        path_ = path % (img.shape[1], int(is_affnist), num_set, num_img)
+                        imgpil.save(path_)
 
             loss, stats = get_mnist_loss(net, images, labels)
             averages['loss'].add(loss.item())
