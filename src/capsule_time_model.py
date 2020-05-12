@@ -1276,15 +1276,19 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
 
 
 def _do_simclr_nce(temperature, probs=None, anchor=None, other=None,
-                   suffix='presence', randomize_selection=False):
+                   suffix='presence', selection_strategy='default'):
     """NOTE: This normalization that happens here should not be applied
     across capsules, only across probs or an individiaul capsule.
     """
-    # NOTE: randomize_selectionahs never been used.
-    if randomize_selection:
-        selection = np.random.randint(0, probs.shape[1], [2])
-    else:
+    if selection_strategy == 'default':
         selection = [0, 1]
+    elif selection_strategy == 'randomize_selection':
+        selection = np.random.randint(0, probs.shape[1], [2])
+    elif selection_strategy == 'anchor0_other12':
+        selection = np.random.randint(1, probs.shape[1], [1])
+        selection = [0, selection[0]]        
+    else:
+        raise
 
     if anchor is None and other is None:
         anchor = probs[:, selection[0]]
@@ -1453,7 +1457,8 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
 
     # Get the loss for the nce over probs.
     nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
-                                 presence_probs_image)
+                                 presence_probs_image,
+                                 selection_strategy=args.simclr_selection_strategy)
     loss += nce * args.nce_presence_lambda
     stats.update(stats_)
 
@@ -1483,7 +1488,7 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         # Shape of selected_capsules is now [bs, ni, 1, capsule_dim]. We seek:
         # nce(cossim(f_2 - f_0, f_1 - f_0) - cossim(f_2 - f_0, f'_1 - f'_0)).
         # We can get this by feeding _do_simclr_nce with those two vectors:
-        anchor = selected_capsules[:, 2] - selected_capsules[:, 0]
+        anchor = selected_capsules[:, 2] - selected_capsules[:, 1]
         other = selected_capsules[:, 1] - selected_capsules[:, 0]
         nce_pose, stats_ = _do_simclr_nce(args.nceprobs_selection_temperature,
                                           anchor=anchor, other=other,
