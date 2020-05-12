@@ -81,7 +81,9 @@ class MovingMNIST(data.Dataset):
                  positive_ratio=0.5, single_angle=False,
                  use_simclr_xforms=False,
                  use_diff_class_digit=False,
-                 is_affnist=False, no_hit_side=False):
+                 is_affnist=False, no_hit_side=False,
+                 discrete_angle=False, center_discrete=False,
+                 center_discrete_count=1):
         self.root = root
         self.is_three_images = is_three_images
         self.is_reorder_loss = is_reorder_loss
@@ -118,7 +120,9 @@ class MovingMNIST(data.Dataset):
             train=train, center_start=center_start, single_angle=single_angle,
             positive_ratio=positive_ratio,
             use_diff_class_digit=use_diff_class_digit,
-            no_hit_side=no_hit_side
+            no_hit_side=no_hit_side, discrete_angle=discrete_angle,
+            center_discrete=center_discrete,
+            center_discrete_count=center_discrete_count
         )
 
         if one_data_loop:
@@ -214,7 +218,8 @@ class _BouncingMNISTDataHandler(object):
                  is_reorder_loss=False, num_digits=2,
                  step_length=0.035, train=False, center_start=False,
                  single_angle=False, positive_ratio=0.5, use_diff_class_digit=False,
-                 no_hit_side=False):
+                 no_hit_side=False, discrete_angle=False, center_discrete=False,
+                 center_discrete_count=1):
         self.seq_length_ = seq_length
         self.skip = skip
         self.image_size_ = image_size
@@ -222,6 +227,9 @@ class _BouncingMNISTDataHandler(object):
         self.num_digits_ = num_digits
         self.step_length_ = step_length # NOTE: was 0.1
         self.no_hit_side = no_hit_side
+        self.discrete_angle = discrete_angle
+        self.center_discrete = center_discrete
+        self.center_discrete_count = center_discrete_count
 
         self.digit_size_ = digit_size
         self.frame_size_ = self.image_size_ ** 2
@@ -270,6 +278,20 @@ class _BouncingMNISTDataHandler(object):
                 # NOTE: Trying deterministic here
                 x = [0.5] * num_digits
                 y = [0.5] * num_digits
+            elif self.center_discrete:
+                # Initial position uniform random inside the box.
+                if self.center_discrete_count % 2 == 0:
+                    # cdc=4 --> pos in [3, 6]
+                    half_width = int(self.center_discrete_count/2)
+                    _start_pos = 5 - half_width
+                    _end_pos = 5 + half_width
+                else:
+                    # cdc=5 --> pos in [3, 7]
+                    half_width = int((self.center_discrete_count - 1)/2)
+                    _start_pos = 5 - half_width
+                    _end_pos = 5 + half_width + 1
+                x = np.random.randint(_start_pos, _end_pos, size=[num_digits]) / 10
+                y = np.random.randint(_start_pos, _end_pos, size=[num_digits]) / 10
             else:
                 # Initial position uniform random inside the box.
                 y = np.random.rand(num_digits)
@@ -278,6 +300,8 @@ class _BouncingMNISTDataHandler(object):
             # Choose a random velocity.
             if self.single_angle:
                 theta = np.pi / 2.
+            elif self.discrete_angle:
+                theta = 2 * np.pi * np.random.randint(4, size=[num_digits]) / 4
             else:
                 theta = np.random.rand(num_digits) * 2 * np.pi
             v_y = np.sin(theta)

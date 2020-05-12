@@ -1275,14 +1275,22 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     return loss, stats
 
 
-def _do_simclr_nce(temperature, probs=None, anchor=None, other=None, suffix='presence'):
+def _do_simclr_nce(temperature, probs=None, anchor=None, other=None,
+                   suffix='presence', randomize_selection=False):
     """NOTE: This normalization that happens here should not be applied
     across capsules, only across probs or an individiaul capsule.
     """
-    if anchor is None:
-        anchor = probs[:, 0]
-    if other is None:
-        other = probs[:, 1]
+    # NOTE: randomize_selectionahs never been used.
+    if randomize_selection:
+        selection = np.random.randint(0, probs.shape[1], [2])
+    else:
+        selection = [0, 1]
+
+    if anchor is None and other is None:
+        anchor = probs[:, selection[0]]
+        other = probs[:, selection[1]]
+    elif anchor is None or other is None:
+        raise
 
     batch_size = anchor.shape[0]
     anchor = F.normalize(anchor, dim=1)

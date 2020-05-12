@@ -1468,7 +1468,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1492,6 +1492,133 @@ def run(find_counter=None):
         'step_length': [0.035, 0.05]
     }
     time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # The issue with the aboe was that:
+    # A) there were too mahy directions and
+    # B) the tsne was over random image positions, which is much harder to
+    #    assess. While yes, it should be something that is distinguishable by
+    #    class, that it wasn't isn't helpful for us.
+    # Otherwise ... Doing ncelinear_maxfirst ... with 40x40 and removing the fixed_center
+    # Counter:  410
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 80 if hostname == 'dgx-1' else 32,
+        'name': '2020.05.11',
+        'config': 'resnet_backbone_movingmnist2_20ccgray_img40',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'step_length': 0.035,
+        'image_size': 40,
+        'no_hit_side': True,
+    })
+    var_arrays = {
+        'nceprobs_selection_temperature': [0.8, 1., 1.2],
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Same as above re fixing the center_discrete and discrete_angle.
+    # Counter: 413
+    num_gpus = 2
+    job.update({
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'image_size': 64,
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+    })
+    var_arrays = {
+        'nceprobs_selection_temperature': [0.8, 1.],
+        'step_length': [0.035, 0.05]
+    }
+    time = 10
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Going back to the ones that worked (i.e. 399) and trying to see
+    # if we can push up the discrete number of positions we use from the center.
+    # Counter:  417
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'name': '2020.05.12',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.035
+    })
+    var_arrays = {
+        'center_discrete_count': [1, 2, 3, 4]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Same as the above but using bigger step_length.
+    # Counter:  421
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'name': '2020.05.12',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.07
+    })
+    var_arrays = {
+        'center_discrete_count': [1, 2, 3, 4]
+    }
+    time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)

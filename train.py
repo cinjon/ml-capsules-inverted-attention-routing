@@ -46,21 +46,18 @@ from src.resnet_reorder_model import ReorderResNet
 
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
-             single_angle=False, use_cuda_tsne=False, tsne_batch_size=8,
-             num_workers=2, image_size=64):
-    # from MulticoreTSNE import MulticoreTSNE as multiTSNE
-
-    # NOTE: Use this when it's the only thing on the GPU.
-    if use_cuda_tsne:
-        from tsnecuda import TSNE as cudaTSNE
-    else:
-        from sklearn.manifold import TSNE
+             center_discrete=False, single_angle=False, use_cuda_tsne=False,
+             tsne_batch_size=8, num_workers=2, image_size=64):             
+    # lolz. Import them all.
+    from tsnecuda import TSNE as cudaTSNE
+    from MulticoreTSNE import MulticoreTSNE as multiTSNE
+    # from sklearn.manifold import TSNE
 
     if use_moving_mnist:
         train_set = MovingMNist2(data_root, train=True, seq_len=1,
                                  image_size=image_size, colored=False,
                                  tiny=False, num_digits=1, one_data_loop=True,
-                                 center_start=center_start,
+                                 center_start=center_start, center_discrete=center_discrete,
                                  single_angle=single_angle)
         test_set = MovingMNist2(data_root, train=False, seq_len=1,
                                 image_size=image_size, colored=False,
@@ -221,18 +218,30 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                 print(vis_x)
                 print(vis_y)
                 print(vis_x.shape, vis_y.shape, epoch)
+                path_ = os.path.join(
+                    path, 'tsnenan.%s.%s.%s.%03f.npy' % (
+                        suffix, key, split, epoch)
+                )
                 if any(np.isnan(vis_x)) or any(np.isnan(vis_y)):
                     print('\n***\n')
                     print('Nan!: ', key, np.isnan(x).any())
-                    print(x)
-                    print(newx)
                     if not np.isnan(x).any():
-                        path_ = os.path.join(
-                            path, 'tsnenan.%s.%s.%s.%03f.npy' % (
-                                suffix, key, split, epoch)
-                        )
                         with open(path_, 'wb') as f:
                             np.save(f, x)
+                    print("Trying multiTSNE ...")
+                    embeddings = multiTSNE(
+                        n_jobs=4, n_components=2, perplexity=30,
+                        learning_rate=100.0
+                    ).fit_transform(newx)
+                    vis_x = embeddings[:, 0]
+                    vis_y = embeddings[:, 1]
+                    print(vis_x)
+                    print(vis_y)
+                    print(vis_x.shape, vis_y.shape, epoch)
+                    if any(np.isnan(vis_x)) or any(np.isnan(vis_y)):
+                        print('multi ALSO had problems with %s' % path_)
+                    else:
+                        print('Hey uh, multi looks fine yo! ', path_)
                     print('\n***\n')
                 else:
                     print('Carry on...')
@@ -312,7 +321,10 @@ def get_loaders(args, rank=0):
                                  positive_ratio=args.positive_ratio,
                                  use_simclr_xforms=args.use_simclr_xforms,
                                  use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'],
-                                 is_affnist=False, no_hit_side=args.no_hit_side)
+                                 is_affnist=False, no_hit_side=args.no_hit_side,
+                                 discrete_angle=args.discrete_angle,
+                                 center_discrete=args.center_discrete,
+                                 center_discrete_count=args.center_discrete_count)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
                                 image_size=args.image_size, colored=args.colored, tiny=False,
                                 is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
@@ -323,7 +335,10 @@ def get_loaders(args, rank=0):
                                 step_length=args.step_length,
                                 positive_ratio=args.positive_ratio,
                                 use_diff_class_digit=args.use_diff_class_digit or args.criterion in ['probs_test'],
-                                no_hit_side=args.no_hit_side)
+                                no_hit_side=args.no_hit_side,
+                                discrete_angle=args.discrete_angle,
+                                center_discrete=args.center_discrete,
+                                center_discrete_count=args.center_discrete_count)
         # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
             args.affnist_root, train=False, subset=args.affnist_subset,
@@ -380,21 +395,25 @@ def get_loaders(args, rank=0):
                                                   num_workers=args.num_workers)
         affnist_test_loader = torch.utils.data.DataLoader(
             affnist_test_set, batch_size=args.batch_size, shuffle=False)            
-    elif args.dataset == 'MovingMNist2.img1':
+    elif args.dataset == 'MovingMNist.img1':
         train_set = MovingMNist2(args.data_root, train=True, seq_len=1, image_size=64,
                                  colored=args.colored, tiny=False,
                                  one_data_loop=True,
                                  is_three_images='triangle' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center,
-                                 single_angle=args.fix_moving_mnist_angle)
+                                 single_angle=args.fix_moving_mnist_angle,
+                                 discrete_angle=args.discrete_angle,
+                                 center_discrete=args.center_discrete)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=1, image_size=64,
                                 colored=args.colored, tiny=False,
                                 one_data_loop=True,
                                 is_three_images='triangle' in args.criterion,
                                 num_digits=args.num_mnist_digits,
                                 center_start=args.fix_moving_mnist_center,
-                                single_angle=args.fix_moving_mnist_angle)
+                                single_angle=args.fix_moving_mnist_angle,
+                                discrete_angle=args.discrete_angle,
+                                center_discrete=args.center_discrete)
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -1280,9 +1299,12 @@ def main(gpu, args, port=12355):
                 epoch > args.do_tsne_test_after
         ]):
             print('\n***\nStarting TSNE (%d)\n***' % epoch)
+            # NOTE: We always put center_start as true because we are using this
+            # as a test on the digits. That's what hte linear separation is about.
+            # (the angle doesn't matter).
             run_tsne(
                 args.data_root, net, store_dir, epoch, use_moving_mnist=True,
-                comet_exp=comet_exp, center_start=args.fix_moving_mnist_center,
+                comet_exp=comet_exp, center_start=True, #args.fix_moving_mnist_center,
                 single_angle=args.fix_moving_mnist_angle,
                 use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size,
                 image_size=args.image_size
@@ -1363,6 +1385,16 @@ if __name__ == '__main__':
     parser.add_argument('--no_hit_side',
                         action='store_true',
                         help='whether to not let the mnist digits hit teh side.')
+    parser.add_argument('--center_discrete',
+                        action='store_true',
+                        help='whether to use discrete center for mnist')
+    parser.add_argument('--center_discrete_count',
+                        type=int,
+                        default=1,
+                        help='when 1, we just use the center. what number of positions to use from the center.')
+    parser.add_argument('--discrete_angle',
+                        action='store_true',
+                        help='whether to use just four directions for angle')
     parser.add_argument('--backbone',
                         default='resnet',
                         type=str,
