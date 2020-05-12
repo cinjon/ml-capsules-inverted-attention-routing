@@ -10,9 +10,17 @@ do_jobs for the ones above are False.
 from run_on_cluster import do_jobarray
 import socket
 hostname = socket.gethostname()
+is_cims = hostname.startswith('cassio')
+is_dgx = hostname.startswith('dgx-1')
+is_prince = hostname.startswith('log-')
 
 email = 'cinjon@nyu.edu'
-code_directory = '/home/resnick/Code/ml-capsules-inverted-attention-routing'
+if is_cims or is_dgx:
+    code_directory = '/home/resnick/Code/ml-capsules-inverted-attention-routing'
+elif is_prince:
+    code_directory = '/home/cr2668/Code/ml-capsules-inverted-attention-routing'
+else:
+    raise
 
 
 def run(find_counter=None):
@@ -1428,7 +1436,7 @@ def run(find_counter=None):
         'criterion': 'nceprobs_selective',
         'lr': 1e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'batch_size': 32 if is_dgx else 20,
         'name': '2020.05.10',
         'nceprobs_selection': 'ncelinear_maxfirst'
     })
@@ -1452,7 +1460,7 @@ def run(find_counter=None):
         'criterion': 'nceprobs_selective',
         'lr': 1e-4,
         'num_gpus': num_gpus,
-        'batch_size': 80 if hostname == 'dgx-1' else 32,
+        'batch_size': 80 if is_dgx else 32,
         'name': '2020.05.11',
         'config': 'resnet_backbone_movingmnist2_20ccgray_img40',
         'nceprobs_selection': 'ncelinear_maxfirst',
@@ -1479,7 +1487,7 @@ def run(find_counter=None):
     num_gpus = 2
     job.update({
         'config': 'resnet_backbone_movingmnist2_20ccgray',
-        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'batch_size': 32 if is_dgx else 20,
         'nceprobs_selection': 'ncelinear_maxfirst',
         'image_size': 64,
         'fix_moving_mnist_angle': False,
@@ -1512,7 +1520,7 @@ def run(find_counter=None):
         'criterion': 'nceprobs_selective',
         'lr': 1e-4,
         'num_gpus': num_gpus,
-        'batch_size': 80 if hostname == 'dgx-1' else 32,
+        'batch_size': 80 if is_dgx else 32,
         'name': '2020.05.11',
         'config': 'resnet_backbone_movingmnist2_20ccgray_img40',
         'nceprobs_selection': 'ncelinear_maxfirst',
@@ -1540,7 +1548,7 @@ def run(find_counter=None):
     num_gpus = 2
     job.update({
         'config': 'resnet_backbone_movingmnist2_20ccgray',
-        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'batch_size': 32 if is_dgx else 20,
         'nceprobs_selection': 'ncelinear_maxfirst',
         'image_size': 64,
         'fix_moving_mnist_angle': False,
@@ -1571,7 +1579,7 @@ def run(find_counter=None):
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 1e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'batch_size': 32 if is_dgx else 20,
         'name': '2020.05.12',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1589,7 +1597,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1603,7 +1611,7 @@ def run(find_counter=None):
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 1e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32 if hostname == 'dgx-1' else 20,
+        'batch_size': 32 if is_dgx else 20,
         'name': '2020.05.12',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1622,6 +1630,39 @@ def run(find_counter=None):
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Same as the above but using bigger LR.
+    # Counter:  425
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 1e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if is_dgx else 20,
+        'name': '2020.05.12',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.07
+    })
+    var_arrays = {
+        'center_discrete_count': [1, 3],
+        'lr': [3e-4, 1e-3]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
