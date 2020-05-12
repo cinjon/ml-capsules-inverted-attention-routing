@@ -8,11 +8,12 @@ When you want to add more jobs just put them below and MAKE SURE that all of the
 do_jobs for the ones above are False.
 """
 from run_on_cluster import do_jobarray
+import os
 import socket
 hostname = socket.gethostname()
 is_cims = hostname.startswith('cassio')
 is_dgx = hostname.startswith('dgx-1')
-is_prince = hostname.startswith('log-')
+is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 email = 'cinjon@nyu.edu'
 if is_cims or is_dgx:
@@ -41,6 +42,7 @@ def run(find_counter=None):
         'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
         'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist'
     }
+
     num_gpus = 1
     time = 8
     var_arrays = {
@@ -112,6 +114,12 @@ def run(find_counter=None):
         find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
+
+    if is_prince:
+        print("SETTING FOR PRINCE")
+        job['data_root'] = os.path.join('/beegfs/cr2668/vidcaps', 'MovingMNist')
+        job['affnist_root'] = os.path.join('/beegfs/cr2668/vidcaps', 'affnist')
+        job['results_dir'] = '/beegfs/cr2668/vidcaps/results'
 
     # Here, we are shrinking the triangle lambda again and trying a bigger LR,
     # along with a milestone schedule.
@@ -1634,30 +1642,31 @@ def run(find_counter=None):
         return counter, _job
 
 
-    # Same as the above but using bigger LR.
+    # Fix the center; Float the angle; Have the NCE probs go over anchor=0, other={1,2} evenly;
+    # NOTE: ALSO! We are changing the anchor in selection to be over [2, 1] rather than [2, 0]. I think should fix that it's building weird size diffs into the frames.
+    # Use a bigger step_size to do this.
     # Counter:  425
     print(counter)
     num_gpus = 2
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
-        'lr': 1e-4,
         'num_gpus': num_gpus,
         'batch_size': 32 if is_dgx else 20,
         'name': '2020.05.12',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
-        'fix_moving_mnist_center': False,
+        'fix_moving_mnist_center': True,
         'nce_presence_temperature': 0.1,
         'no_hit_side': True,
-        'center_discrete': True,
-        'discrete_angle': True,
+        'center_discrete': False,
+        'discrete_angle': False,
         'nceprobs_selection_temperature': 1.,
-        'step_length': 0.07
+        'simclr_selection_strategy': 'anchor0_other12'
     })
     var_arrays = {
-        'center_discrete_count': [1, 3],
-        'lr': [3e-4, 1e-3]
+        'lr': [1e-4, 3e-4],
+        'step_length': [.035, .07, .09]
     }
     time = 12
     counter, _job = do_jobarray(

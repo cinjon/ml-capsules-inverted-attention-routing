@@ -12,7 +12,8 @@ import sys
 
 hostname = socket.gethostname()
 is_cims = hostname.startswith('cassio')
-is_prince = hostname.startswith('log-')
+is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
+print(hostname)
 
 def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
                 time, find_counter, do_job=False):                
@@ -115,7 +116,7 @@ def write_prince(slurmfile, jobname, jobarray, email, num_cpus, time, num_gpus, 
     minutes = int((time - hours) * 60)
 
     with open(slurmfile, 'w') as f:
-        _write_common(f)
+        _write_common(f, jobname, jobarray, email, num_cpus, hours, minutes, num_gpus, gb, slurm_logs)
         
         f.write("module purge\n")
         f.write("module load cudnn/10.1v7.6.5.32\n")
