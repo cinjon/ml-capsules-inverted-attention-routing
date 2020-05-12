@@ -44,6 +44,13 @@ import video_transforms
 from src.resnet_reorder_model import ReorderResNet
 
 
+import socket
+hostname = socket.gethostname()
+is_cims = hostname.startswith('cassio')
+is_dgx = hostname.startswith('dgx-1')
+is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
+
+
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
              center_discrete=False, single_angle=False, use_cuda_tsne=False,
@@ -1573,6 +1580,10 @@ if __name__ == '__main__':
                         default=False,
                         action='store_true',
                         help='whether to use the simclr nce or ours.')
+    parser.add_argument('--simclr_selection_strategy',
+                        type=str,
+                        default='default',
+                        help='type of selection strategy for simclr nceprobs.')
     parser.add_argument('--num_output_classes',
                         default=10,
                         type=float,
@@ -1658,7 +1669,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.mode == 'jobarray':
         jobid = int(os.getenv('SLURM_ARRAY_TASK_ID'))
-        user = 'cinjon' if getpass.getuser() == 'resnick' else 'zeping'
+        user = getpass.getuser()
+        user = 'cinjon' if user in ['cr2668', 'resnick'] else 'zeping'
         if user == 'cinjon':
             counter, job = cinjon_jobs.run(find_counter=jobid)
         elif user == 'zeping':
