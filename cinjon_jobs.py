@@ -1760,9 +1760,8 @@ def run(find_counter=None):
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
-        'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 40,
+        'batch_size': 64,
         'name': '2020.05.13',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1776,14 +1775,16 @@ def run(find_counter=None):
         'ncelinear_anchorselect': '21',
         'center_discrete_count': 4,
         'presence_loss_type': 'sigmoid_only',
+        'simclr_selection_strategy': 'default'
     })
     var_arrays = {
-        'simclr_selection_strategy': ['default']
+        'lr': [1e-4, 3e-4],
+        'step_length': [.07, .09],
     }
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=False)
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
