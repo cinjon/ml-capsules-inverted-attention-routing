@@ -60,6 +60,10 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
     # from sklearn.manifold import TSNE
 
+    if is_prince:
+        # We aren't using conda, so we run into issues with using cudaTSNE
+        use_cuda_tsne = False
+
     if use_moving_mnist:
         train_set = MovingMNist2(data_root, train=True, seq_len=1,
                                  image_size=image_size, colored=False,
@@ -216,7 +220,7 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                         n_components=2, perplexity=30, learning_rate=100.0
                     ).fit_transform(newx)
                 else:
-                    embeddings = TSNE(
+                    embeddings = multiTSNE(
                         n_components=2, perplexity=30, learning_rate=100.0
                     ).fit_transform(newx)
 
@@ -1584,6 +1588,10 @@ if __name__ == '__main__':
                         type=str,
                         default='default',
                         help='type of selection strategy for simclr nceprobs.')
+    parser.add_argument('--ncelinear_anchorselect',
+                        type=str,
+                        default='20',
+                        help='what line segment to use in the ncelinear approach.')
     parser.add_argument('--num_output_classes',
                         default=10,
                         type=float,

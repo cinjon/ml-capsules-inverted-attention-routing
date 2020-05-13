@@ -1488,7 +1488,10 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         # Shape of selected_capsules is now [bs, ni, 1, capsule_dim]. We seek:
         # nce(cossim(f_2 - f_0, f_1 - f_0) - cossim(f_2 - f_0, f'_1 - f'_0)).
         # We can get this by feeding _do_simclr_nce with those two vectors:
-        anchor = selected_capsules[:, 2] - selected_capsules[:, 1]
+        if args.ncelinear_anchorselect == '21':
+            anchor = selected_capsules[:, 2] - selected_capsules[:, 1]
+        elif args.ncelinear_anchorselect == '20':
+            anchor = selected_capsules[:, 2] - selected_capsules[:, 0]
         other = selected_capsules[:, 1] - selected_capsules[:, 0]
         nce_pose, stats_ = _do_simclr_nce(args.nceprobs_selection_temperature,
                                           anchor=anchor, other=other,
