@@ -1662,7 +1662,8 @@ def run(find_counter=None):
         'center_discrete': False,
         'discrete_angle': False,
         'nceprobs_selection_temperature': 1.,
-        'simclr_selection_strategy': 'anchor0_other12'
+        'simclr_selection_strategy': 'anchor0_other12',
+        'ncelinear_anchorselect': '21'
     })
     var_arrays = {
         'lr': [1e-4, 3e-4],
