@@ -1234,7 +1234,8 @@ def main(gpu, args, port=12355):
             config['params'], args.backbone, args.num_routing, num_frames,
             args.use_presence_probs, args.presence_temperature,
             args.presence_loss_type, do_capsule_computation, args.mnist_lr,
-            args.mnist_weight_decay, args.affnist_subset, args.step_length)            
+            args.mnist_weight_decay, args.affnist_subset, args.step_length,
+            args.mnist_classifier_strategy)
         print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
         return
     # else:
@@ -1300,7 +1301,8 @@ def main(gpu, args, port=12355):
                 epoch, net, args.data_root, args.affnist_root, comet_exp,
                 args.mnist_batch_size, args.colored, args.num_workers,
                 config['params'], args.backbone, args.num_routing, num_frames,
-                args.mnist_lr, args.mnist_weight_decay, args.affnist_subset)
+                args.mnist_lr, args.mnist_weight_decay, args.affnist_subset,
+                args.step_length, args.mnist_classifier_strategy)
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
         if all([
@@ -1367,18 +1369,6 @@ if __name__ == '__main__':
                         default=10, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'starting at this epoch.')
-    parser.add_argument('--mnist_batch_size',
-                        default=16,
-                        type=int,
-                        help='number of batch size')
-    parser.add_argument('--mnist_lr',
-                        default=0.1,
-                        type=float,
-                        help='number of batch size')
-    parser.add_argument('--mnist_weight_decay',
-                        default=5e-4,
-                        type=float,
-                        help='weight decay')
     parser.add_argument('--num_routing',
                         default=1,
                         type=int,
@@ -1584,6 +1574,10 @@ if __name__ == '__main__':
                         default=False,
                         action='store_true',
                         help='whether to use the simclr nce or ours.')
+    parser.add_argument('--simclr_no_norm',
+                        default=False,
+                        action='store_true',
+                        help='do the norm on simclr.')
     parser.add_argument('--simclr_selection_strategy',
                         type=str,
                         default='default',
@@ -1667,6 +1661,20 @@ if __name__ == '__main__':
     # Linpred Info
     parser.add_argument('--linpred_test_only', action='store_true',
                         help='whether to only do the linpred test and exit')
+    parser.add_argument('--mnist_batch_size',
+                        default=16,
+                        type=int,
+                        help='number of batch size')
+    parser.add_argument('--mnist_lr',
+                        default=0.1,
+                        type=float,
+                        help='number of batch size')
+    parser.add_argument('--mnist_weight_decay',
+                        default=5e-4,
+                        type=float,
+                        help='weight decay')
+    parser.add_argument('--mnist_classifier_strategy', type=str, default='pose',
+                        help='what strategy to do from pose, presence-pose, presence.')
 
     # TSNE info
     parser.add_argument('--use_cuda_tsne', action='store_true',
@@ -1696,14 +1704,16 @@ if __name__ == '__main__':
     args.use_angle_loss = not args.no_use_angle_loss
     args.use_hinge_loss = not args.no_use_hinge_loss
     args.use_nce_loss = not args.no_use_nce_loss
+    args.simclr_do_norm = not args.simclr_no_norm
 
     # args.linpred_test_only = True
-    # args.resume_epoch = 84
+    # args.resume_epoch = 72
     # args.resume_dir = os.path.join(
     #     '/misc/kcgscratch1/ChoGroup/resnick/vidcaps',
-    #     'results/2020.05.10/399/2020-05-10-13-13-06'
+    #     'results/2020.05.12/423/2020-05-12-11-07-29'
     # )
     # args.num_gpus = 1
+    # args.mnist_classifier_strategy = 'presence'
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 

@@ -11,9 +11,12 @@ import sys
 
 
 hostname = socket.gethostname()
-is_cims = hostname.startswith('cassio')
+is_cims = any([
+    hostname.startswith('cassio'),
+    hostname.startswith('dgx'),
+    hostname.startswith('lion')
+])
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
-print(hostname)
 
 def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
                 time, find_counter, do_job=False):                

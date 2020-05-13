@@ -11,7 +11,7 @@ from run_on_cluster import do_jobarray
 import os
 import socket
 hostname = socket.gethostname()
-is_cims = hostname.startswith('cassio')
+is_cims = hostname.startswith('cassio') or hostname.startswith('lion')
 is_dgx = hostname.startswith('dgx-1')
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
@@ -1672,7 +1672,118 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Doing discrete_count=3 with step_length=0.9 and lr=3e-4.
+    # Also trying both simclr selection strategies.
+    # Counter:  431
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if is_dgx else 20,
+        'name': '2020.05.13',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.09,
+        'ncelinear_anchorselect': '21',
+        'center_discrete_count': 3,
+    })
+    var_arrays = {
+        'simclr_selection_strategy': ['default', 'anchor0_other12']
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Here seeing what happens if we use the l2norm approach.
+    # Also trying both simclr selection strategies.
+    # Counter:  433
+    # NOTE / TODO: We didn't do 433 yet because DGX was taken.
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32 if is_dgx else 22,
+        'name': '2020.05.13',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.09,
+        'ncelinear_anchorselect': '21',
+        'center_discrete_count': 3,
+        'presence_loss_type': 'l2norm',
+    })
+    var_arrays = {
+        'simclr_selection_strategy': ['default', 'anchor0_other12']
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Try doing the .07 with center_discrete_count=4 and with bigger batch size
+    # in the V100. Note that we also have lr=3e-4.
+    # We are using .07 here because that worked for center_discrete_count=3, i.e
+    # this is pretty much the same as the conditions in 423 except for the cdc=4
+    # and the batchsize higher (and the lr higher fine...)
+    # Counter:  435
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 40,
+        'name': '2020.05.13',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.07,
+        'ncelinear_anchorselect': '21',
+        'center_discrete_count': 4,
+        'presence_loss_type': 'sigmoid_only',
+    })
+    var_arrays = {
+        'simclr_selection_strategy': ['default']
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 

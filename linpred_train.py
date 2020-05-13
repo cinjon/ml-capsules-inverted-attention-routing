@@ -92,7 +92,7 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                   colored, num_workers, config_params, backbone, num_routing,
                   num_frames, use_presence_probs, presence_temperature,
                   presence_loss_type, do_capsule_computation, lr, weight_decay,
-                  affnist_subset, step_length):
+                  affnist_subset, step_length, mnist_classifier_strategy):
     # Allowed to move the image around.
     # Lolz. Ok, so when we move the center around but don't move it in the
     # training, then the accuracy is ... not so hot. We gotta train these with
@@ -133,7 +133,8 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                                            presence_temperature=presence_temperature,
                                            presence_loss_type=presence_loss_type,
                                            do_capsule_computation=do_capsule_computation,
-                                           mnist_classifier_head=True)
+                                           mnist_classifier_head=True,
+                                           mnist_classifier_strategy=mnist_classifier_strategy)
 
     optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
     net.to('cuda')
@@ -172,7 +173,7 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
             train_acc, test_acc
         )
 
-        if test_acc > .40:
+        if test_acc > .80 or (epoch > 0 and epoch % 5 == 0):
             affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader, is_affnist=True)
             test_metrics.update({
                 'ssl%d acc/affnist' % ssl_epoch: affnist_acc,

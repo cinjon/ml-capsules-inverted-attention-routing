@@ -24,6 +24,7 @@ class CapsTimeModel(nn.Module):
                  num_routing,
                  sequential_routing=True,
                  mnist_classifier_head=False,
+                 mnist_classifier_strategy='pose',
                  num_frames=4,
                  is_discriminating_model=False, # Use True if original model.
                  use_presence_probs=False,
@@ -64,7 +65,7 @@ class CapsTimeModel(nn.Module):
         self.presence_temperature = presence_temperature
         self.presence_loss_type = presence_loss_type
         if use_presence_probs:
-            if 'squash' not in presence_loss_type:
+            if 'squash' not in presence_loss_type and 'l2norm' not in presence_loss_type:
                 input_dim = params['backbone']['output_dim']
                 input_dim *= int(params['backbone']['inp_img_size']/2)**2
                 output_dim = params['class_capsules']['num_caps']
@@ -176,12 +177,16 @@ class CapsTimeModel(nn.Module):
             self.ordering_head = nn.Linear(num_concatenated_dims, 1)
 
         self.get_mnist_head = mnist_classifier_head
+        self.mnist_classifier_strategy = mnist_classifier_strategy
         if mnist_classifier_head:
-            num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
+            if mnist_classifier_strategy in ['pose', 'presence-pose']:
+                num_params = params['class_capsules']['caps_dim'] * params['class_capsules']['num_caps']
+            elif mnist_classifier_strategy == 'presence':
+                num_params = params['class_capsules']['num_caps']
             self.mnist_classifier_head = nn.Linear(num_params, 10)
 
     def get_presence(self, pre_caps, final_pose):
-        if 'squash' not in self.presence_loss_type:
+        if 'squash' not in self.presence_loss_type and 'l2norm' not in self.presence_loss_type:
             presence_input = pre_caps.view(pre_caps.shape[0], -1)
             logits = self.presence_prob_head(presence_input)
 
@@ -230,13 +235,8 @@ class CapsTimeModel(nn.Module):
             pose_norm_sq = final_pose.norm(dim=2, keepdim=True) ** 2
             logits = pose_norm_sq / (1 + pose_norm_sq) * pose_normalized
             logits = logits.norm(dim=2)
-        # elif 'weightsum' in self.presence_loss_type:
-        #     # final_pose is [bs * num_images, num_capsules, capsule_dim]
-        #     # in this version, we just use the sum of the capsule_dims as the
-        #     # weight. So:
-        #     per_capsule_sum = final_pose.sum(dim=2)
-        #     norm_sum = per_capsule_sum.sum(1, keepdim=True)
-        #     per_capsule_sum_normalized
+        elif 'l2norm' in self.presence_loss_type:
+            logits = final_pose.norm(dim=2)            
         else:
             raise
         return logits
@@ -327,12 +327,21 @@ class CapsTimeModel(nn.Module):
             return ret
         elif return_mnist_head:
             pose_shape = pose.shape
-            out = pose.view(pose_shape[0], -1)
-            out = self.mnist_classifier_head(out)
             if self.use_presence_probs:
                 presence_probs = self.get_presence(pre_caps_res, pose.clone())
+                if self.mnist_classifier_strategy == 'pose':
+                    out = pose.view(pose_shape[0], -1)
+                    out = self.mnist_classifier_head(out)
+                elif self.mnist_classifier_strategy == 'presence-pose':
+                    out = pose.clone() * presence_probs[:, :, None]
+                    out = out.view(pose_shape[0], -1)
+                    out = self.mnist_classifier_head(out)
+                elif self.mnist_classifier_strategy == 'presence':
+                    out = self.mnist_classifier_head(presence_probs)
                 return out, pose, presence_probs
             else:
+                out = pose.view(pose_shape[0], -1)
+                out = self.mnist_classifier_head(out)
                 return out, pose
         elif self.use_presence_probs:
             presence_probs = self.get_presence(pre_caps_res, pose.clone())
@@ -1276,7 +1285,8 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
 
 
 def _do_simclr_nce(temperature, probs=None, anchor=None, other=None,
-                   suffix='presence', selection_strategy='default'):
+                   suffix='presence', selection_strategy='default',
+                   do_norm=True):
     """NOTE: This normalization that happens here should not be applied
     across capsules, only across probs or an individiaul capsule.
     """
@@ -1297,8 +1307,10 @@ def _do_simclr_nce(temperature, probs=None, anchor=None, other=None,
         raise
 
     batch_size = anchor.shape[0]
-    anchor = F.normalize(anchor, dim=1)
-    other = F.normalize(other, dim=1)
+
+    if do_norm:
+        anchor = F.normalize(anchor, dim=1)
+        other = F.normalize(other, dim=1)
     representations = torch.cat([other, anchor], dim=0)
     similarity_matrix = F.cosine_similarity(
         representations.unsqueeze(1), representations.unsqueeze(0), dim=-1)
@@ -1458,7 +1470,8 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
     # Get the loss for the nce over probs.
     nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
                                  presence_probs_image,
-                                 selection_strategy=args.simclr_selection_strategy)
+                                 selection_strategy=args.simclr_selection_strategy,
+                                 do_norm=args.simclr_do_norm)
     loss += nce * args.nce_presence_lambda
     stats.update(stats_)
 
@@ -1485,6 +1498,12 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
             'max_count_maximally_activate_capsule': max_unique_counts.item(),
             'mean_count_maximally_activate_capsule': mean_unique_counts.item(),
         })
+        for index in max_indices:
+            key = 'activated_%d' % index
+            if key not in stats:
+                stats[key] = 0
+            stats[key] += 1
+
         # Shape of selected_capsules is now [bs, ni, 1, capsule_dim]. We seek:
         # nce(cossim(f_2 - f_0, f_1 - f_0) - cossim(f_2 - f_0, f'_1 - f'_0)).
         # We can get this by feeding _do_simclr_nce with those two vectors:
@@ -1495,7 +1514,8 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         other = selected_capsules[:, 1] - selected_capsules[:, 0]
         nce_pose, stats_ = _do_simclr_nce(args.nceprobs_selection_temperature,
                                           anchor=anchor, other=other,
-                                          suffix='selection')
+                                          suffix='selection',
+                                          do_norm=args.simclr_do_norm)
         loss += nce_pose * args.nce_selection_lambda
         stats.update(stats_)
 
@@ -1517,44 +1537,72 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         raise
 
     # Get the probability stats
-    presence_probs_first = presence_probs_image[:, 0]
-    presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
-    within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
-    within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
-    within_entropy = within_entropy.sum(1)
-    within_entropy = within_entropy.mean()
+    if 'sigmoid' in args.presence_loss_type:
+        presence_probs_first = presence_probs_image[:, 0]
+        presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
+        within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
+        within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+        within_entropy = within_entropy.sum(1)
+        within_entropy = within_entropy.mean()
+        
+        presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
+        presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
+        between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
+        between_entropy = between_entropy.mean(0)
+        
+        max_values, _ = torch.max(presence_probs_first, 1)
+        min_values, _ = torch.min(presence_probs_first, 1)
+        mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+        std_per_capsule = [value.item() for value in presence_probs.std(0)]
+        l2_probs_12 = torch.norm(
+            presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
+        l2_probs_13 = torch.norm(
+            presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
+        l2_probs_23 = torch.norm(
+            presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
+        
+        for num, item in enumerate(mean_per_capsule):
+            stats['capsule_prob_mean_%d' % num] = item
+        for num, item in enumerate(std_per_capsule):
+            stats['capsule_prob_std_%d' % num] = item
 
-    presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
-    presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
-    between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
-    between_entropy = between_entropy.mean(0)
+        stats.update({
+            'within_entropy': within_entropy.item(),
+            'between_entropy': between_entropy.item(),
+            'mean_max_prob': max_values.mean().item(),
+            'mean_min_prob': min_values.mean().item(),
+            'mean_prob': presence_probs_first.mean().item(),
+            'l2_presence_probs_12': l2_probs_12.item(),
+            'l2_presence_probs_13': l2_probs_13.item(),
+            'l2_presence_probs_23': l2_probs_23.item(),
+        })
+    elif 'l2norm' in args.presence_loss_type:
+        # Here, we don't have values between 0 and 1. Instead, they are norms.
+        presence_probs_first = presence_probs_image[:, 0]
+        max_values, _ = torch.max(presence_probs_first, 1)
+        min_values, _ = torch.min(presence_probs_first, 1)
+        mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+        std_per_capsule = [value.item() for value in presence_probs.std(0)]
+        l2_probs_12 = torch.norm(
+            presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
+        l2_probs_13 = torch.norm(
+            presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
+        l2_probs_23 = torch.norm(
+            presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
+        
+        for num, item in enumerate(mean_per_capsule):
+            stats['capsule_prob_mean_%d' % num] = item
+        for num, item in enumerate(std_per_capsule):
+            stats['capsule_prob_std_%d' % num] = item
 
-    max_values, _ = torch.max(presence_probs_first, 1)
-    min_values, _ = torch.min(presence_probs_first, 1)
-    mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
-    std_per_capsule = [value.item() for value in presence_probs.std(0)]
-    l2_probs_12 = torch.norm(
-        presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
-    l2_probs_13 = torch.norm(
-        presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
-    l2_probs_23 = torch.norm(
-        presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
-
-    for num, item in enumerate(mean_per_capsule):
-        stats['capsule_prob_mean_%d' % num] = item
-    for num, item in enumerate(std_per_capsule):
-        stats['capsule_prob_std_%d' % num] = item
-
-    stats.update({
-        'within_entropy': within_entropy.item(),
-        'between_entropy': between_entropy.item(),
-        'mean_max_prob': max_values.mean().item(),
-        'mean_min_prob': min_values.mean().item(),
-        'mean_prob': presence_probs_first.mean().item(),
-        'l2_presence_probs_12': l2_probs_12.item(),
-        'l2_presence_probs_13': l2_probs_13.item(),
-        'l2_presence_probs_23': l2_probs_23.item(),
-    })
+        stats.update({
+            'mean_max_l2norm': max_values.mean().item(),
+            'mean_min_l2norm': min_values.mean().item(),
+            'mean_l2norm': presence_probs_first.mean().item(),
+            'l2_presence_l2norms_12': l2_probs_12.item(),
+            'l2_presence_l2norms_13': l2_probs_13.item(),
+            'l2_presence_l2norms_23': l2_probs_23.item(),
+        })
 
     # Get the frame distance stats.
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
