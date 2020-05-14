@@ -14,7 +14,8 @@ hostname = socket.gethostname()
 is_cims = any([
     hostname.startswith('cassio'),
     hostname.startswith('dgx'),
-    hostname.startswith('lion')
+    hostname.startswith('lion'),
+    hostname.startswith('weaver')
 ])
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
