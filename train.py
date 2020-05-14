@@ -54,7 +54,7 @@ is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
              use_mnist=False, comet_exp=None, center_start=True,
              center_discrete=False, single_angle=False, use_cuda_tsne=False,
-             tsne_batch_size=8, num_workers=2, image_size=64):             
+             tsne_batch_size=8, num_workers=2, image_size=64):
     # lolz. Import them all.
     from tsnecuda import TSNE as cudaTSNE
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
@@ -72,7 +72,7 @@ def run_tsne(data_root, model, path, epoch, use_moving_mnist=False,
                                  single_angle=single_angle)
         test_set = MovingMNist2(data_root, train=False, seq_len=1,
                                 image_size=image_size, colored=False,
-                                tiny=False, num_digits=1, one_data_loop=True,                                
+                                tiny=False, num_digits=1, one_data_loop=True,
                                 center_start=center_start,
                                 single_angle=single_angle)
         suffix = 'movmnist64.pfix%d.afix%d' % (int(center_start), int(single_angle))
@@ -405,7 +405,7 @@ def get_loaders(args, rank=0):
                                                   shuffle=False,
                                                   num_workers=args.num_workers)
         affnist_test_loader = torch.utils.data.DataLoader(
-            affnist_test_set, batch_size=args.batch_size, shuffle=False)            
+            affnist_test_set, batch_size=args.batch_size, shuffle=False)
     elif args.dataset == 'MovingMNist.img1':
         train_set = MovingMNist2(args.data_root, train=True, seq_len=1, image_size=64,
                                  colored=args.colored, tiny=False,
@@ -677,6 +677,18 @@ def get_loaders(args, rank=0):
             batch_size=args.batch_size,
             shuffle=False,
             collate_fn=gymnastics_flow_collate)
+    elif args.dataset == 'smallNORB':
+        smallNORB_root = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/smallNORB'
+        train_set = SmallNORB(smallNORB_root, train=True)
+        test_set = SmallNORB(smallNORB_root, train=False)
+        train_loader = torch.utils.data.DataLoader(
+            train_set,
+            batch_size=args.batch_size,
+            shuffle=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_set,
+            batch_size=args.batch_size,
+            shuffle=False)
 
     print('Returning data loaders...')
     return train_loader, test_loader, affnist_test_loader
@@ -838,7 +850,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
-            
+
         loss.backward()
 
         total_norm = 0.
@@ -865,7 +877,7 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 with comet_exp.train():
                     epoch_avgs = {k: v.item() for k, v in averages.items()}
                     comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
-                    
+
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item() if 'accuracy' in averages else None
 
@@ -1089,7 +1101,7 @@ def main(gpu, args, port=12355):
         args.criterion != 'discriminative_probs',
         args.criterion != 'nceprobs_selective'
     ])
-        
+
     do_capsule_computation = args.criterion not in [
         'triangle_margin2_angle_nce', 'discriminative_probs'] or \
         args.use_nce_loss or args.use_hinge_loss or args.use_angle_loss
@@ -1716,4 +1728,4 @@ if __name__ == '__main__':
     # args.mnist_classifier_strategy = 'presence'
 
     default_port = random.randint(10000, 19000)
-    mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port)) 
+    mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
