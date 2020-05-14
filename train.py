@@ -46,8 +46,6 @@ from src.resnet_reorder_model import ReorderResNet
 
 import socket
 hostname = socket.gethostname()
-is_cims = hostname.startswith('cassio')
-is_dgx = hostname.startswith('dgx-1')
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 
@@ -1247,7 +1245,8 @@ def main(gpu, args, port=12355):
             args.use_presence_probs, args.presence_temperature,
             args.presence_loss_type, do_capsule_computation, args.mnist_lr,
             args.mnist_weight_decay, args.affnist_subset, args.step_length,
-            args.mnist_classifier_strategy)
+            args.mnist_classifier_strategy, args.affnist_dataset_loader,
+            args.resume_dir)
         print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
         return
     # else:
@@ -1314,7 +1313,8 @@ def main(gpu, args, port=12355):
                 args.mnist_batch_size, args.colored, args.num_workers,
                 config['params'], args.backbone, args.num_routing, num_frames,
                 args.mnist_lr, args.mnist_weight_decay, args.affnist_subset,
-                args.step_length, args.mnist_classifier_strategy)
+                args.step_length, args.mnist_classifier_strategy,
+                args.affnist_dataset_loader)
             print('\n***\nEnded MNist Test (%d)\n***' % epoch)
 
         if all([
@@ -1687,6 +1687,8 @@ if __name__ == '__main__':
                         help='weight decay')
     parser.add_argument('--mnist_classifier_strategy', type=str, default='pose',
                         help='what strategy to do from pose, presence-pose, presence.')
+    parser.add_argument('--affnist_dataaset_loader', type=str, default='affnist',
+                        help='what dataset to use for loading affnist.')
 
     # TSNE info
     parser.add_argument('--use_cuda_tsne', action='store_true',
@@ -1718,14 +1720,23 @@ if __name__ == '__main__':
     args.use_nce_loss = not args.no_use_nce_loss
     args.simclr_do_norm = not args.simclr_no_norm
 
+    # Doing LinPred.
     # args.linpred_test_only = True
-    # args.resume_epoch = 72
-    # args.resume_dir = os.path.join(
-    #     '/misc/kcgscratch1/ChoGroup/resnick/vidcaps',
-    #     'results/2020.05.12/423/2020-05-12-11-07-29'
-    # )
     # args.num_gpus = 1
-    # args.mnist_classifier_strategy = 'presence'
+    # args.mnist_classifier_strategy = 'pose'
+    # args.affnist_dataset_loader = 'movingmnist'
+    # if args.counter == 433:
+    #     args.resume_dir = os.path.join(
+    #         '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
+    #         '2020.05.13/433/2020-05-13-16-30-13'
+    #     )
+    #     args.resume_epoch = 72
+    # elif args.counter == 434:
+    #     args.resume_dir = os.path.join(
+    #         '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
+    #         '2020.05.13/434/2020-05-13-11-13-11'
+    #     )
+    #     args.resume_epoch = 36
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))

@@ -92,35 +92,52 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                   colored, num_workers, config_params, backbone, num_routing,
                   num_frames, use_presence_probs, presence_temperature,
                   presence_loss_type, do_capsule_computation, lr, weight_decay,
-                  affnist_subset, step_length, mnist_classifier_strategy):
+                  affnist_subset, step_length, mnist_classifier_strategy,
+                  affnist_dataset_loader, resume_dir):
     # Allowed to move the image around.
     # Lolz. Ok, so when we move the center around but don't move it in the
     # training, then the accuracy is ... not so hot. We gotta train these with
     # fix_center turned off. TODO: Redo yo.
     train_set = MovingMNist2(mnist_root, train=True, seq_len=1, image_size=64,
                              colored=colored, tiny=False, num_digits=1,
-                             center_start=False, step_length=step_length)
+                             center_start=False, step_length=step_length,
+                             one_data_loop=True)
     test_set = MovingMNist2(mnist_root, train=False, seq_len=1, image_size=64,
                             colored=colored, tiny=False, num_digits=1,
-                            center_start=False, step_length=step_length)
+                            center_start=False, step_length=step_length,
+                            one_data_loop=True)
     train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                batch_size=batch_size,
                                                shuffle=True,
                                                num_workers=num_workers)
+    # We do shuffle so taht we can test it before epoch starts.
     test_loader = torch.utils.data.DataLoader(dataset=test_set,
                                               batch_size=batch_size,
-                                              shuffle=False,
+                                              shuffle=True,
                                               num_workers=num_workers)
     # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
-    affnist_test_set = AffNist(
-        affnist_root, train=False, subset=affnist_subset,
-        transform=transforms.Compose([
-            transforms.Pad(12),
-            transforms.ToTensor(),
-        ])
-    )
-    affnist_test_loader = torch.utils.data.DataLoader(
-        affnist_test_set, batch_size=batch_size, shuffle=False)
+    if affnist_dataset_loader == 'affnist':
+        affnist_test_set = AffNist(
+            affnist_root, train=False, subset=affnist_subset,
+            transform=transforms.Compose([
+                transforms.Pad(12),
+                transforms.ToTensor(),
+            ])
+        )
+        # We do shuffle so taht we can test it before epoch starts.
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers)
+    elif affnist_dataset_loader == 'movingmnist':
+        affnist_test_set = MovingMNist2(
+            affnist_root, train=False, seq_len=1, image_size=64,
+            colored=colored, tiny=False, num_digits=1, center_start=False,
+            step_length=step_length, is_affnist=True, one_data_loop=True)
+        # We do shuffle so taht we can test it before epoch starts.
+        affnist_test_loader = torch.utils.data.DataLoader(
+            affnist_test_set, batch_size=batch_size, shuffle=True,
+            # num_workers=num_workers
+        )
 
     dp = 0.0
     net = capsule_time_model.CapsTimeModel(config_params,
@@ -148,8 +165,24 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
         if 'mnist_classifier' not in name:
             param.requires_grad = False
 
-    start_epoch = 0
+    start_epoch = 1
     total_epochs = 20
+
+    affnist_loss, affnist_acc = test(0, net, affnist_test_loader,
+                                     is_affnist=True, resume_dir=resume_dir)
+    test_loss, test_acc = test(0, net, test_loader, is_affnist=False,
+                               resume_dir=resume_dir)
+    test_metrics = {
+        'ssl%d acc/mnist' % ssl_epoch: test_acc,
+        'ssl%d loss/mnist' % ssl_epoch: test_loss,
+        'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
+        'ssl%d loss/affnist' % ssl_epoch: affnist_loss
+    }
+    if comet_exp is not None:
+        with comet_exp.test():
+            comet_exp.log_metrics(test_metrics, step=0)
+    print('Before training: ')
+    print(sorted(test_metrics.items()))
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
         train_loss, train_acc = train(epoch, net, optimizer, train_loader)
@@ -174,7 +207,8 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
         )
 
         if test_acc > .80 or (epoch > 0 and epoch % 5 == 0):
-            affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader, is_affnist=True)
+            affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader,
+                                             is_affnist=True, resume_dir=resume_dir)
             test_metrics.update({
                 'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
                 'ssl%d loss/affnist' % ssl_epoch: affnist_loss
@@ -241,7 +275,7 @@ def train(epoch, net, optimizer, loader):
 
         if batch_idx % 100 == 0:
             log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-            print(log_text.format(epoch+1, batch_idx, len(loader),
+            print(log_text.format(epoch, batch_idx, len(loader),
                                   time.time() - t, averages['loss'].item())
             )
             t = time.time()
@@ -251,7 +285,7 @@ def train(epoch, net, optimizer, loader):
     return train_loss, train_acc
 
 
-def test(epoch, net, loader, is_affnist=False):
+def test(epoch, net, loader, is_affnist=False, resume_dir=None):
     net.eval()
     averages = {
         'loss': Averager()
@@ -263,8 +297,8 @@ def test(epoch, net, loader, is_affnist=False):
         for batch_idx, (images, labels) in enumerate(loader):
             images = images.to(device)
             labels = labels.to(device)
-            path = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/movmnist%d.runssl.affn%d.images%d-%d.png'
-            if epoch == 0 or is_affnist:
+            if resume_dir and (epoch == 0 or is_affnist):
+                path = os.path.join(resume_dir, 'runssl%d.affn%d.images%d-%d.png')
                 for num_set in range(images.shape[0]):
                     for num_img in range(images.shape[1]):
                         img = images[num_set, num_img].cpu().numpy()
@@ -285,10 +319,14 @@ def test(epoch, net, loader, is_affnist=False):
 
             if batch_idx % 100 == 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-                print(log_text.format(epoch + 1, batch_idx, len(loader),
+                print(log_text.format(epoch, batch_idx, len(loader),
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
+
+            if epoch == 0 and batch_idx == 500:
+                # We just want a subset
+                break
 
         test_loss = averages['loss'].item()
         test_acc = averages['accuracy'].item()

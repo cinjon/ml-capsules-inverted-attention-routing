@@ -101,7 +101,9 @@ class MovingMNIST(data.Dataset):
                 ToTensor()
             ])
 
+        self.is_affnist = is_affnist
         if is_affnist:
+            print('Loading Affnist...')
             data, labels = self.load_affnist(train)
         else:
             data, labels = self.load_dataset(train)
@@ -188,7 +190,7 @@ class MovingMNIST(data.Dataset):
         return filepath
 
     def __getitem__(self, index):
-        datum, label = self.data_handler.get_item()
+        datum, label = self.data_handler.get_item(do_print=self.is_affnist)
         # datum is [3 1, 64, 64]
         if self.use_simclr_xforms:
             datum = transform(datum, self.xforms)
@@ -363,7 +365,7 @@ class _BouncingMNISTDataHandler(object):
 
         return output_data
 
-    def get_item(self, verbose=False):
+    def get_item(self, verbose=False, do_print=False):
         start_y, start_x = self.get_random_trajectory(self.num_digits_)
 
         # minibatch data
