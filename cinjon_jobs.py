@@ -1923,7 +1923,7 @@ def run(find_counter=None):
         return counter, _job
 
 
-    # 434 but with discrete={4, 5} and lower temperature.
+    # 434 but with discrete=5 and lower temperature.
     print(counter)
     num_gpus = 2
     job.update({
@@ -1931,7 +1931,7 @@ def run(find_counter=None):
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32 if is_dgx else 22,
+        'batch_size': 32 if is_dgx or is_prince else 22,
         'name': '2020.05.13',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1942,18 +1942,18 @@ def run(find_counter=None):
         'discrete_angle': True,
         'nceprobs_selection_temperature': 1.,
         'step_length': 0.09,
+        'center_discrete_count': 5,
         'ncelinear_anchorselect': '21',
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12'
     })
     var_arrays = {
-        'center_discrete_count': [4, 5],
-        'nce_presence_temperature': [0.03],
+        'nce_presence_temperature': [0.05, .01]
     }
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=False)
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
