@@ -1761,7 +1761,7 @@ def run(find_counter=None):
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'num_gpus': num_gpus,
-        'batch_size': 64,
+        'batch_size': 44,
         'name': '2020.05.13',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1781,7 +1781,7 @@ def run(find_counter=None):
         'lr': [1e-4, 3e-4],
         'step_length': [.07, .09],
     }
-    time = 12
+    time = 24
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)

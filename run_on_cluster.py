@@ -121,7 +121,8 @@ def write_prince(slurmfile, jobname, jobarray, email, num_cpus, time, num_gpus, 
     with open(slurmfile, 'w') as f:
         _write_common(f, jobname, jobarray, email, num_cpus, hours, minutes, num_gpus, gb, slurm_logs)
 
-        f.write("#SBATCH --gres=gpu:v100:%d\n" % num_gpus)
+        f.write("#SBATCH --gres=gpu:%d\n" % num_gpus)
+        f.write("#SBATCH --partition=p40_4\n")
         f.write("module purge\n")
         f.write("module load cudnn/10.1v7.6.5.32\n")
         f.write("module load cuda/10.1.105\n")
