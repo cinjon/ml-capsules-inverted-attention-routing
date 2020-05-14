@@ -1853,15 +1853,15 @@ def run(find_counter=None):
         return counter, _job
 
 
-    # Reproducing 434 with a different seed and num_routing=[1, 2]
+    # Reproducing 434 with different seeds
     # Counter: 441
-    num_gpus = 2
+    num_gpus = 1
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32,
+        'batch_size': 32
         'name': '2020.05.13',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1875,12 +1875,46 @@ def run(find_counter=None):
         'ncelinear_anchorselect': '21',
         'center_discrete_count': 3,
         'presence_loss_type': 'l2norm',
-        'simclr_selection_strategy': 'anchor0_other12'
+        'simclr_selection_strategy': 'anchor0_other12',
+        'num_routing': 1
     })
     var_arrays = {
         'seed': [1, 2],
-        'num_routing': [1, 2]
     }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Trying 434 with num_routing=2. Requires smaller batch_size :(.
+    # Counter: 443
+    num_gpus = 1
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 16,
+        'name': '2020.05.14',
+        'nceprobs_selection': 'ncelinear_maxfirst',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.09,
+        'ncelinear_anchorselect': '21',
+        'center_discrete_count': 3,
+        'presence_loss_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'num_routing': 2
+    })
+    var_arrays = {}
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
