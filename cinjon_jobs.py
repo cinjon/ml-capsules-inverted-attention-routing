@@ -1861,7 +1861,7 @@ def run(find_counter=None):
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32
+        'batch_size': 32,
         'name': '2020.05.13',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1891,13 +1891,19 @@ def run(find_counter=None):
 
     # Trying 434 with num_routing=2. Requires smaller batch_size :(.
     # Counter: 443
-    num_gpus = 1
+    num_gpus = 2
+    if is_dgx:
+        batch_size = 16
+    elif is_prince:
+        batch_size = 22
+    else:
+        batch_size = 12
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 16,
+        'batch_size': batch_size,
         'name': '2020.05.14',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
@@ -1918,7 +1924,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=False)
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
@@ -1926,13 +1932,19 @@ def run(find_counter=None):
     # 434 but with discrete=5 and lower temperature.
     print(counter)
     num_gpus = 2
+    if is_prince:
+        batch_size = 44
+    elif is_dgx:
+        batch_size = 32
+    else:
+        batch_size = 22
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
         'lr': 3e-4,
         'num_gpus': num_gpus,
-        'batch_size': 32 if is_dgx or is_prince else 22,
-        'name': '2020.05.13',
+        'batch_size': batch_size,
+        'name': '2020.05.14',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
         'fix_moving_mnist_center': False,
