@@ -251,6 +251,8 @@ def train(epoch, net, optimizer, loader):
     averages = {
         'loss': Averager()
     }
+    check_total = 0
+    check_sum = 0
 
     t = time.time()
     optimizer.zero_grad()
@@ -265,9 +267,13 @@ def train(epoch, net, optimizer, loader):
             if key not in averages:
                 averages[key] = Averager()
             averages[key].add(value)
+            if key == 'accuracy':
+                check_total += len(images)
+                check_sum += value * len(images)
         extra_s = 'Acc: {:.5f}.'.format(
             averages['accuracy'].item()
         )
+        extra_s += ' --> check_sum: %.4f, check_total: %d' % (check_sum, check_total)
 
         loss.backward()
         optimizer.step()
@@ -282,6 +288,8 @@ def train(epoch, net, optimizer, loader):
 
     train_loss = averages['loss'].item()
     train_acc = averages['accuracy'].item()
+    print('Train Acc: %.5f / check_sum: %.5f / check_total: %d' % (
+        train_acc, check_sum, check_total))
     return train_loss, train_acc
 
 
@@ -290,6 +298,8 @@ def test(epoch, net, loader, is_affnist=False, resume_dir=None):
     averages = {
         'loss': Averager()
     }
+    check_total = 0
+    check_sum = 0
 
     t = time.time()
     device = 'cuda'
@@ -313,9 +323,14 @@ def test(epoch, net, loader, is_affnist=False, resume_dir=None):
                 if key not in averages:
                     averages[key] = Averager()
                 averages[key].add(value)
+                if key == 'accuracy':
+                    check_total += len(images)
+                    check_sum += value * len(images)
+
             extra_s = 'Acc: {:.5f}.'.format(
                 averages['accuracy'].item()
             )
+            extra_s += ' --> check_sum: %.4f, check_total: %d' % (check_sum, check_total)
 
             if batch_idx % 100 == 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -331,6 +346,8 @@ def test(epoch, net, loader, is_affnist=False, resume_dir=None):
         test_loss = averages['loss'].item()
         test_acc = averages['accuracy'].item()
 
+    print('Test Acc: %.5f / check_sum: %.5f / check_total: %d' % (
+        test_acc, check_sum, check_total))
     return test_loss, test_acc
 
 

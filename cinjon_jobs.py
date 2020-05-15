@@ -1958,6 +1958,7 @@ def run(find_counter=None):
         'ncelinear_anchorselect': '21',
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12',
+        'num_routing': 1
     })
     var_arrays = {
         'nce_presence_temperature': [0.05, .01]
@@ -2035,7 +2036,8 @@ def run(find_counter=None):
         'ncelinear_anchorselect': '21',
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12',
-        'nce_presence_temperature': 0.01
+        'nce_presence_temperature': 0.01,
+        'num_routing': 1
     })
     var_arrays = {
         'seed': [0, 1]

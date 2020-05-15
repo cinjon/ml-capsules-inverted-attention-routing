@@ -1277,7 +1277,7 @@ def main(gpu, args, port=12355):
             #     print('Test Loss %.4f.' % test_loss)
             #     results['test_loss'].append(test_loss)
 
-            if not args.debug and epoch >= last_saved_epoch + 10 and \
+            if not args.debug and epoch >= last_saved_epoch + 4 and \
                last_test_loss > test_loss:
                 state = {
                     'net': net.state_dict(),
@@ -1723,21 +1723,37 @@ if __name__ == '__main__':
     # Doing LinPred.
     # args.linpred_test_only = True
     # args.num_gpus = 1
-    # args.mnist_classifier_strategy = 'pose'
+    # args.mnist_classifier_strategy = 'presence'
     # args.affnist_dataset_loader = 'movingmnist'
+    # base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
     # args.seed = 1000
+    # if is_prince:
+    #     base_dir = '/beegfs/cr2668/vidcaps/results'
+
     # if args.counter == 433:
     #     args.resume_dir = os.path.join(
-    #         '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
+    #         base_dir,
     #         '2020.05.13/433/2020-05-13-16-30-13'
     #     )
     #     args.resume_epoch = 72
     # elif args.counter == 434:
     #     args.resume_dir = os.path.join(
-    #         '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
+    #         base_dir,
     #         '2020.05.13/434/2020-05-13-11-13-11'
     #     )
     #     args.resume_epoch = 36
+    # elif args.counter == 444:
+    #     args.resume_dir = os.path.join(
+    #         base_dir,
+    #         '2020.05.14/444/2020-05-14-15-50-19'
+    #     )
+    #     args.resume_epoch = 48
+    # elif args.counter == 445:
+    #     args.resume_dir = os.path.join(
+    #         base_dir,
+    #         '2020.05.14/445/2020-05-14-16-28-48'
+    #     )
+    #     args.resume_epoch = 48
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
