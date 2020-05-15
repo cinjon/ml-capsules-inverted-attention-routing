@@ -1533,6 +1533,8 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         })
     elif args.nceprobs_selection == 'ncelinear_threshfirst':
         pass
+    elif args.nceprobs_selection == 'ncelinear_none':
+        pass
     else:
         raise
 
