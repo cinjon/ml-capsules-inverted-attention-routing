@@ -1725,6 +1725,7 @@ if __name__ == '__main__':
     # args.num_gpus = 1
     # args.mnist_classifier_strategy = 'pose'
     # args.affnist_dataset_loader = 'movingmnist'
+    # args.seed = 1000
     # if args.counter == 433:
     #     args.resume_dir = os.path.join(
     #         '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
