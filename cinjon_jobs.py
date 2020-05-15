@@ -1862,7 +1862,7 @@ def run(find_counter=None):
         'lr': 3e-4,
         'num_gpus': num_gpus,
         'batch_size': 32,
-        'name': '2020.05.13',
+        'name': '2020.05.14',
         'nceprobs_selection': 'ncelinear_maxfirst',
         'fix_moving_mnist_angle': False,
         'fix_moving_mnist_center': False,
@@ -1876,7 +1876,7 @@ def run(find_counter=None):
         'center_discrete_count': 3,
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12',
-        'num_routing': 1
+        'num_routing': 1 
     })
     var_arrays = {
         'seed': [1, 2],
@@ -1924,13 +1924,13 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
 
     # 434 but with discrete=5 and lower temperature.
-    print(counter)
+    # Counter: 444
     num_gpus = 2
     if is_prince:
         batch_size = 44
@@ -1957,10 +1957,46 @@ def run(find_counter=None):
         'center_discrete_count': 5,
         'ncelinear_anchorselect': '21',
         'presence_loss_type': 'l2norm',
-        'simclr_selection_strategy': 'anchor0_other12'
+        'simclr_selection_strategy': 'anchor0_other12',
     })
     var_arrays = {
         'nce_presence_temperature': [0.05, .01]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # 434 but with no ncelinear action.
+    # Counter: 446
+    num_gpus = 2
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'name': '2020.05.15',
+        'nceprobs_selection': 'ncelinear_none',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.09,
+        'ncelinear_anchorselect': '21',
+        'center_discrete_count': 3,
+        'presence_loss_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'num_routing': 1 
+    })
+    var_arrays = {
+        'seed': [0, 1]
     }
     time = 12
     counter, _job = do_jobarray(
@@ -1969,6 +2005,47 @@ def run(find_counter=None):
     if find_counter and _job:
         return counter, _job
 
+
+    # Same as above but with discrete=5 and temp=0.01
+    # Counter: 448
+    num_gpus = 2
+    if is_prince:
+        batch_size = 44
+    elif is_dgx:
+        batch_size = 32
+    else:
+        batch_size = 22
+    job.update({
+        'criterion': 'nceprobs_selective',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        'batch_size': batch_size,
+        'name': '2020.05.15',
+        'nceprobs_selection': 'ncelinear_none',
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'nce_presence_temperature': 0.1,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'nceprobs_selection_temperature': 1.,
+        'step_length': 0.09,
+        'center_discrete_count': 5,
+        'ncelinear_anchorselect': '21',
+        'presence_loss_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'nce_presence_temperature': 0.01
+    })
+    var_arrays = {
+        'seed': [0, 1]
+    }
+    time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
 
     return None, None
 
