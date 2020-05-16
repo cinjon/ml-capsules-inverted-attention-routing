@@ -424,6 +424,73 @@ class ProbsTest(nn.Module):
         return out
 
 
+class BackboneModel(nn.Module):
+
+    def __init__(self,
+                 params,
+                 backbone,
+                 dp,
+                 num_routing,
+                 sequential_routing=True,
+                 mnist_classifier_head=False,
+                 mnist_classifier_strategy='pose',
+                 num_frames=4,
+                 is_discriminating_model=False, # Use True if original model.
+                 use_presence_probs=False,
+                 presence_temperature=1.0,
+                 presence_loss_type='sigmoid_l1',
+                 do_capsule_computation=True,
+                 do_discriminative_probs=False
+    ):
+        super(BackboneModel, self).__init__()
+
+        ## Primary Capsule Layer
+        self.pc_num_caps = params['primary_capsules']['num_caps']
+        self.pc_caps_dim = params['primary_capsules']['caps_dim']
+        self.pc_output_dim = params['primary_capsules']['out_img_size']
+        ## General
+        self.num_routing = num_routing  # >3 may cause slow converging
+
+        #### Building Networks
+        ## Backbone (before capsule)
+        if backbone == 'simple':
+            self.pre_caps = layers.simple_backbone(
+                params['backbone']['input_dim'],
+                params['backbone']['output_dim'],
+                params['backbone']['kernel_size'],
+                params['backbone']['stride'],
+                params['backbone']['padding'])
+        elif backbone == 'resnet':
+            self.pre_caps = layers.resnet_backbone(
+                params['backbone']['input_dim'],
+                params['backbone']['output_dim'],
+                params['backbone']['stride'])
+
+        input_dim = params['backbone']['output_dim']
+        input_dim *= int(params['backbone']['inp_img_size']/2)**2
+        output_dim = 10
+        self.fc_head = nn.Linear(input_dim, output_dim)
+
+        self.num_class_capsules = params['class_capsules']['num_caps']
+        self.is_discriminating_model = is_discriminating_model
+        self.use_presence_probs = use_presence_probs
+        self.presence_temperature = presence_temperature
+        self.presence_loss_type = presence_loss_type
+
+    def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False,
+                flatten=False, return_mnist_head=False):
+        #### Forward Pass
+        ## Backbone (before capsule)
+        # NOTE: pre_caps is [36, 128, 32, 32], or
+        # [batch_size*num_images, backone['output_dim'],
+        #  backbone['output_image_size], backbone['output_image_size']]
+        # Lulz, this is 32x the input shape for mnist of [36, 1, 64, 64].
+        c = self.pre_caps(x)
+        c = c.view(c.shape[0], -1)
+        out = self.fc_head(c)
+        return out
+
+
 def get_bce_loss(model, images, labels):
     images = images[:, 0, :, :, :]
     output = model(images, return_embedding=False)
@@ -1477,6 +1544,18 @@ def get_probs_test_loss(model, images, device, epoch, args):
 
     loss += loss_nce
     stats.update(stats_nce)
+    return loss, stats
+
+
+def get_backbone_test_loss(model, images, labels, device, epoch, args):
+    # Images are expected to come as singular, not as [bs, num_images].
+    output = model(images)
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
     return loss, stats
 
 

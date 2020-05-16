@@ -1978,7 +1978,7 @@ def run(find_counter=None):
 
     # 434 but with no ncelinear action.
     # Counter: 446
-    num_gpus = 2
+    num_gpus = 1
     job.update({
         'criterion': 'nceprobs_selective',
         'config': 'resnet_backbone_movingmnist2_20ccgray',
@@ -2007,7 +2007,7 @@ def run(find_counter=None):
     time = 12
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -2048,6 +2048,44 @@ def run(find_counter=None):
         'seed': [0, 1]
     }
     time = 12
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Do the backbone_test to get at how this does on AffNist if we don't have
+    # any of the capsule structure on top.
+    # Counter:  450
+    print(counter)
+    num_gpus = 2
+    job.update({
+        'no_use_angle_loss': True,
+        'no_use_hinge_loss': True,
+        'no_use_nce_loss': True,
+        'use_nce_probs': False,
+        'criterion': 'backbone_test_xent',
+        'config': 'resnet_backbone_movingmnist2_20ccgray',
+        'num_output_classes': 10,
+        'lr': 3e-4,
+        'num_workers': 4,
+        'num_gpus': num_gpus,
+        'batch_size': 32,
+        'fix_moving_mnist_angle': False,
+        'fix_moving_mnist_center': False,
+        'no_hit_side': True,
+        'center_discrete': True,
+        'discrete_angle': True,
+        'step_length': 0.09,
+        'center_discrete_count': 5,
+        'name': '2020.05.16',
+        'use_simclr_xforms': False,
+    })
+    var_arrays = {
+        'seed': [0, 1]
+    }
+    time = 10
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)

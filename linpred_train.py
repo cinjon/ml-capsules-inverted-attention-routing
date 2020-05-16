@@ -95,13 +95,12 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                   affnist_subset, step_length, mnist_classifier_strategy,
                   affnist_dataset_loader, resume_dir):
     # Allowed to move the image around.
-    # Lolz. Ok, so when we move the center around but don't move it in the
-    # training, then the accuracy is ... not so hot. We gotta train these with
-    # fix_center turned off. TODO: Redo yo.
     train_set = MovingMNist2(mnist_root, train=True, seq_len=1, image_size=64,
                              colored=colored, tiny=False, num_digits=1,
                              center_start=False, step_length=step_length,
-                             one_data_loop=True)
+                             one_data_loop=True,
+                             center_discrete_count=5, center_discrete=True
+    )                             
     test_set = MovingMNist2(mnist_root, train=False, seq_len=1, image_size=64,
                             colored=colored, tiny=False, num_digits=1,
                             center_start=False, step_length=step_length,

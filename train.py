@@ -861,6 +861,22 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
+        elif 'backbone_test_xent' in criterion:
+            print('IMAGES: ', images.shape)
+            images = images[:, 0]
+            images = images.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+            loss, stats = capsule_time_model.get_backbone_test_loss(
+                net, images, labels, device, epoch, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
 
         loss.backward()
 
@@ -1070,6 +1086,21 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
+            elif 'backbone_test_xent' in criterion:
+                images = images[:, 0]
+                images = images.cuda(device)
+                labels = labels.squeeze()
+                labels = labels.cuda(device)
+                loss, stats = capsule_time_model.get_backbone_test_loss(
+                    net, images, labels, device, epoch, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
             if comet_exp and batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -1136,6 +1167,21 @@ def main(gpu, args, port=12355):
             64, config['params']['class_capsules']['num_caps'],
             temperature=args.presence_temperature,
             use_noise=args.use_rand_presence_noise)
+    elif 'backbone_test' in args.criterion:
+        net = capsule_time_model.BackboneModel(
+            config['params'],
+            args.backbone,
+            args.dp,
+            args.num_routing,
+            sequential_routing=args.sequential_routing,
+            num_frames=num_frames,
+            is_discriminating_model=is_discriminating_model,
+            use_presence_probs=args.use_presence_probs,
+            presence_temperature=args.presence_temperature,
+            presence_loss_type=args.presence_loss_type,
+            do_capsule_computation=do_capsule_computation,
+            do_discriminative_probs=args.criterion == 'discriminative_probs'
+        )
     else:
         net = capsule_time_model.CapsTimeModel(
             config['params'],
@@ -1784,6 +1830,18 @@ if __name__ == '__main__':
     #         '2020.05.14/445/2020-05-14-16-28-48'
     #     )
     #     args.resume_epoch = 48
-
+    # elif args.counter == 446:
+    #     args.resume_dir = os.path.join(
+    #         base_dir,
+    #         '2020.05.15/446/2020-05-15-10-08-35'
+    #     )
+    #     args.resume_epoch = 12
+    # elif args.counter == 447:
+    #     args.resume_dir = os.path.join(
+    #         base_dir,
+    #         '2020.05.15/447/2020-05-15-10-09-02'
+    #     )
+    #     args.resume_epoch = 12
+        
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
