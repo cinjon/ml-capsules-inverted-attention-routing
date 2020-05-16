@@ -2,12 +2,13 @@
 
 Example running jobs.
 
-Make a <username>_jobs.py and have it call do_jobarray. 
+Make a <username>_jobs.py and have it call do_jobarray.
 """
 import itertools
 import os
 import socket
 import sys
+import getpass
 
 
 hostname = socket.gethostname()
@@ -20,7 +21,7 @@ is_cims = any([
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
-                time, find_counter, do_job=False):                
+                time, find_counter, do_job=False):
     # TODO: Are these numbers optimal?
     num_cpus = num_gpus * 4
     gb = num_gpus * 16
@@ -32,6 +33,11 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
         write_func = write_prince
         job['data_root'] = os.path.join(directory, 'MovingMNist')
         job['affnist_data_root'] = os.path.join(directory, 'affnist')
+    elif getpass.getuser() == 'zz2332':
+        directory = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zz2332'
+        write_func = write_cims
+        job['data_root'] = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/MNIST'
+        job['affnist_data_root'] = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/affNIST'
     else:
         raise
 
@@ -66,11 +72,11 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
 
     if find_counter or not do_job:
         return counter, None
-                                
+
     jobname = 'somotion.%dhr.cnt%d-%d' % (time, original_counter, counter)
     jobcommand = "python train.py --mode jobarray"
     print("Size: ", len(jobarray), jobcommand, " /.../ ", jobname)
-    
+
     slurmfile = os.path.join(slurm_scripts, jobname + '.slurm')
     write_func(slurmfile, jobname, jobarray, email, num_cpus, time, num_gpus, gb, slurm_logs, code_directory, jobcommand)
 
@@ -105,7 +111,7 @@ def write_cims(slurmfile, jobname, jobarray, email, num_cpus, time, num_gpus, gb
         _write_common(f, jobname, jobarray, email, num_cpus, hours, minutes, num_gpus, gb, slurm_logs)
 
         f.write("#SBATCH --gres=gpu:%d\n" % num_gpus)
-        f.write("#SBATCH --exclude=%s\n" % exclude)        
+        f.write("#SBATCH --exclude=%s\n" % exclude)
         f.write("module purge" + "\n")
         f.write("module load cuda-10.2\n")
         f.write("module load gcc-8.1\n")

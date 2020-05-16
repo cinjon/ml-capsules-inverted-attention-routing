@@ -31,7 +31,8 @@ class CapsTimeModel(nn.Module):
                  presence_temperature=1.0,
                  presence_loss_type='sigmoid_l1',
                  do_capsule_computation=True,
-                 do_discriminative_probs=False
+                 do_discriminative_probs=False,
+                 do_selective_reorder=False,
     ):
         super(CapsTimeModel, self).__init__()
         #### Parameters
@@ -74,7 +75,7 @@ class CapsTimeModel(nn.Module):
         self.do_discriminative_probs = do_discriminative_probs
         if self.do_discriminative_probs:
             input_dim = params['class_capsules']['num_caps']
-            output_dim = 10                
+            output_dim = 10
             self.final_fc_probs = nn.Linear(input_dim, output_dim)
 
         self.do_capsule_computation = do_capsule_computation
@@ -85,6 +86,8 @@ class CapsTimeModel(nn.Module):
                 dtype=torch.float
             )
             return
+
+        self.do_selective_reorder = do_selective_reorder
 
         ## Primary Capsule Layer (a single CNN)
         self.pc_layer = nn.Conv2d(in_channels=params['primary_capsules']['input_dim'],
@@ -171,8 +174,11 @@ class CapsTimeModel(nn.Module):
             # different classifier for different capsules
             #self.final_fc = nn.Parameter(torch.randn(params['class_capsules']['num_caps'], params['class_capsules']['caps_dim']))
         else:
-            num_concatenated_dims = num_frames * params['class_capsules']['caps_dim'] * \
-                params['class_capsules']['num_caps']
+            if self.do_selective_reorder:
+                num_concatenated_dims = num_frames * params['class_capsules']['caps_dim']
+            else:
+                num_concatenated_dims = num_frames * params['class_capsules']['caps_dim'] * \
+                    params['class_capsules']['num_caps']
             # Either it's ordered correctly or not.
             self.ordering_head = nn.Linear(num_concatenated_dims, 1)
 
@@ -192,7 +198,7 @@ class CapsTimeModel(nn.Module):
 
         if self.presence_loss_type in [
                 'sigmoid_l1', 'sigmoid_only', 'sigmoid_prior_sparsity',
-                'sigmoid_prior_sparsity_fix', 
+                'sigmoid_prior_sparsity_fix',
                 'sigmoid_prior_sparsity_example', 'sigmoid_within_entropy',
                 'sigmoid_within_between_entropy', 'sigmoid_l1_between',
                 'sigmoid_prior_sparsity_example_between_entropy',
@@ -208,7 +214,7 @@ class CapsTimeModel(nn.Module):
             logits += rand_noise
             logits = torch.sigmoid(logits)
         elif self.presence_loss_type in [
-                'sigmoid_prior_sparsity_fix_nospike', 
+                'sigmoid_prior_sparsity_fix_nospike',
         ]:
             # NOTE: loook ma no noise!
             logits *= self.presence_temperature
@@ -224,7 +230,7 @@ class CapsTimeModel(nn.Module):
             logits = F.softmax(logits, 1)
         elif self.presence_loss_type in ['softmax_nonoise']:
             logits *= self.presence_temperature
-            logits = F.softmax(logits, 1)            
+            logits = F.softmax(logits, 1)
         elif 'squash' in self.presence_loss_type:
             # final_pose is [bs * num_images, num_capsules, capsule_dim]
             # We squash that here by doing
@@ -236,7 +242,7 @@ class CapsTimeModel(nn.Module):
             logits = pose_norm_sq / (1 + pose_norm_sq) * pose_normalized
             logits = logits.norm(dim=2)
         elif 'l2norm' in self.presence_loss_type:
-            logits = final_pose.norm(dim=2)            
+            logits = final_pose.norm(dim=2)
         else:
             raise
         return logits
@@ -245,7 +251,7 @@ class CapsTimeModel(nn.Module):
         return self.ordering_head(x)
 
     def forward(self, x, lbl_1=None, lbl_2=None, return_embedding=False,
-                flatten=False, return_mnist_head=False):
+                flatten=False, return_mnist_head=False, return_ordering_selection=None):
         #### Forward Pass
         ## Backbone (before capsule)
         # NOTE: pre_caps is [36, 128, 32, 32], or
@@ -349,6 +355,50 @@ class CapsTimeModel(nn.Module):
                 flattened = presence_probs.view(presence_probs.shape[0], -1)
                 out = self.final_fc_probs(flattened)
                 return pose, presence_probs, out
+            # NOTE: moved get_nceprobs_selective_reorder_loss to here
+            elif return_ordering_selection is not None:
+                if return_ordering_selection == 'ncelinear_maxfirst':
+                    stats = {}
+                    num_images = 3
+                    real_batch_size = pose.shape[0] // 3
+
+                    pose = pose.view(real_batch_size, num_images, *pose.shape[1:])
+                    presence_probs_image = presence_probs.view(
+                        real_batch_size, num_images, -1)
+
+                    presence_probs_image_detached = presence_probs_image.detach()
+                    max_indices = torch.argmax(presence_probs_image_detached[:, 0], dim=1)
+                    # shape of pose is [bs, nimg, ncaps, ndim], shape of indices is [bs].
+                    # Now we want to get the nth index from max_indices from the nth batch
+                    # entry and then combine them again.
+                    selected_capsules = torch.stack(
+                        [pose[num, :, index] for num, index in enumerate(max_indices)]
+                    )
+                    max_unique, max_counts = torch.unique(max_indices, return_counts=True)
+                    max_counts = max_counts.float()
+                    max_unique_counts, _ = torch.max(max_counts, 0)
+                    mean_unique_counts = torch.mean(max_counts)
+                    stats.update({
+                        'max_count_maximally_activate_capsule': max_unique_counts.item(),
+                        'mean_count_maximally_activate_capsule': mean_unique_counts.item(),
+                    })
+
+                    # ordering = model(selected_capsules.view(batch_size, -1), return_ordering=True).squeeze(-1)
+                    ordering = self.ordering_head(selected_capsules.view(real_batch_size, -1)).squeeze(-1)
+
+                    # Get the capsule distance stats.
+                    sim_12 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 1, :])
+                    sim_23 = torch.dist(selected_capsules[:, 1, :], selected_capsules[:, 2, :])
+                    sim_13 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 2, :])
+                    stats.update({
+                        'capsule_12_sim': sim_12.item(),
+                        'capsule_23_sim': sim_23.item(),
+                        'capsule_13_sim': sim_13.item(),
+                    })
+
+                    return pose, presence_probs, ordering, stats
+                else:
+                    raise
             else:
                 return pose, presence_probs
         else:
@@ -736,7 +786,7 @@ def get_triangle_loss(self, images, device, args):
 def get_discriminative_probs(model, images, labels, device, epoch, args):
     use_two_images = not args.use_hinge_loss and not args.use_angle_loss
     batch_size, num_images = images.shape[:2]
-    
+
     # Change view so that we can put everything through the model at once.
     images = images.view(batch_size * num_images, *images.shape[2:])
     pose, presence_probs, class_probs = model(images)
@@ -786,7 +836,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
     if args.use_presence_probs:
         pose, presence_probs = model(images)
         if 'nomul' not in args.presence_loss_type:
-            pose *= presence_probs[:, :, None]        
+            pose *= presence_probs[:, :, None]
     else:
         pose = model(images)
     pose = pose.view(batch_size, num_images, *pose.shape[1:])
@@ -843,7 +893,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             'margin_loss_12': margin_loss_12.item(),
         })
         stats['margin_loss'] = stats['margin_loss_23'] + stats['margin_loss_12']
-                
+
     # Get the NCE loss.
     if args.use_nce_loss:
         anchor = pose[:, 0, :]
@@ -880,7 +930,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         stats.update({
             'pos_sim': positive_similarity,
             'neg_sim': negative_similarity,
-            'nce': nce.item()            
+            'nce': nce.item()
         })
 
     if args.use_presence_probs:
@@ -908,7 +958,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
         presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
         between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
         between_entropy = between_entropy.mean(0)
-        
+
         stats['within_entropy'] = within_entropy.item()
         stats['between_entropy'] = between_entropy.item()
         max_values, _ = torch.max(presence_probs_first, 1)
@@ -1163,7 +1213,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             # let's makign that a bit softer and doing a margin loss, so that
             # it's at LEAST that amount.
             # NOTE: My prediction is that this will make it so that each wants
-            # to be responsible for at least blah of the 
+            # to be responsible for at least blah of the
             target_capsule_presence = batch_size * 1. / args.num_output_classes
             capsule_presence_sum = presence_probs_first.sum(0)
 
@@ -1237,7 +1287,7 @@ def get_triangle_nce_loss(model, images, device, epoch, args,
             stats['presence_loss'] = presence_loss.item()
         elif args.presence_loss_type in [
                 'squash_prior_sparsity_within_entropy_fix',
-                'squash_prior_sparsity_within_entropy_nomul_fix', 
+                'squash_prior_sparsity_within_entropy_nomul_fix',
         ]:
             # NOTE: These are incorrect as well.
             target_example_presence = model.module.num_class_capsules * 1. / args.num_output_classes
@@ -1296,7 +1346,7 @@ def _do_simclr_nce(temperature, probs=None, anchor=None, other=None,
         selection = np.random.randint(0, probs.shape[1], [2])
     elif selection_strategy == 'anchor0_other12':
         selection = np.random.randint(1, probs.shape[1], [1])
-        selection = [0, selection[0]]        
+        selection = [0, selection[0]]
     else:
         raise
 
@@ -1369,22 +1419,22 @@ def _do_our_nce(probs, args):
     # the diagonal has the positive similarity = log(exp(sim(x, y)))
     identity = torch.eye(batch_size).to(similarity.device)
     positive_similarity = (similarity * identity).sum(1)
-    
+
     # we get the total similarity by taking the logsumexp of similarity.
     log_sum_total = torch.logsumexp(similarity, dim=1)
     diff = positive_similarity - log_sum_total
     nce = -diff.mean()
-    
+
     total_similarity = similarity.sum(1)
     negative_similarity = (total_similarity - positive_similarity).mean().item() / (batch_size - 1)
     positive_similarity = positive_similarity.mean().item()
-    
+
     loss = nce * args.nce_presence_lambda
     stats = {}
     stats.update({
         'pos_sim_presence': positive_similarity,
         'neg_sim_presence': negative_similarity,
-        'nce_presence': nce.item()            
+        'nce_presence': nce.item()
     })
     return loss, stats
 
@@ -1546,12 +1596,12 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
         within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
         within_entropy = within_entropy.sum(1)
         within_entropy = within_entropy.mean()
-        
+
         presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
         presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
         between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
         between_entropy = between_entropy.mean(0)
-        
+
         max_values, _ = torch.max(presence_probs_first, 1)
         min_values, _ = torch.min(presence_probs_first, 1)
         mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
@@ -1562,7 +1612,7 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
             presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
         l2_probs_23 = torch.norm(
             presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
-        
+
         for num, item in enumerate(mean_per_capsule):
             stats['capsule_prob_mean_%d' % num] = item
         for num, item in enumerate(std_per_capsule):
@@ -1591,7 +1641,7 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
             presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
         l2_probs_23 = torch.norm(
             presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
-        
+
         for num, item in enumerate(mean_per_capsule):
             stats['capsule_prob_mean_%d' % num] = item
         for num, item in enumerate(std_per_capsule):
@@ -1605,6 +1655,219 @@ def get_nceprobs_selective_loss(model, images, device, epoch, args,
             'l2_presence_l2norms_13': l2_probs_13.item(),
             'l2_presence_l2norms_23': l2_probs_23.item(),
         })
+
+    # Get the frame distance stats.
+    sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+    segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    segment_13 = pose[:, 2, :] - pose[:, 0, :]
+    segment_23 = pose[:, 2, :] - pose[:, 1, :]
+    stats.update({
+        'frame_12_sim': sim_12.item(),
+        'frame_23_sim': sim_23.item(),
+        'frame_13_sim': sim_13.item(),
+        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+    })
+
+    return loss, stats
+
+def get_nceprobs_selective_reorder_loss(model, images, labels, args):
+    # Change view so that we can put everything through the model at once.
+    batch_size, num_images = images.shape[:2]
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose, presence_probs, ordering, stats = model(images, return_ordering_selection=args.nceprobs_selection)
+    # pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    presence_probs_image = presence_probs.view(
+        batch_size, num_images, -1)
+
+    # stats = {}
+    loss = 0.
+
+    # Get the loss for the nce over probs.
+    nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
+                                 presence_probs_image)
+    loss += nce * args.nce_presence_lambda
+    stats.update(stats_)
+
+    # presence_probs_image_detached = presence_probs_image.detach()
+    if args.nceprobs_selection == 'ncelinear_maxfirst':
+        labels = labels.squeeze(-1).float().to(ordering.device)
+        ordering_loss = F.binary_cross_entropy_with_logits(ordering, labels)
+        loss += ordering_loss * args.lambda_ordering
+
+        predictions = torch.sigmoid(ordering) > 0.5
+        accuracy = (predictions == labels).float().mean().item()
+
+        stats.update({
+            'accuracy': accuracy,
+            'ordering_loss': ordering_loss.item()
+        })
+
+    elif args.nceprobs_selection == 'ncelinear_threshfirst':
+        pass
+    else:
+        raise
+
+    # Get the probability stats
+    presence_probs_first = presence_probs_image[:, 0]
+    presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
+    within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
+    within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+    within_entropy = within_entropy.sum(1)
+    within_entropy = within_entropy.mean()
+
+    presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
+    presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
+    between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
+    between_entropy = between_entropy.mean(0)
+
+    max_values, _ = torch.max(presence_probs_first, 1)
+    min_values, _ = torch.min(presence_probs_first, 1)
+    mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+    std_per_capsule = [value.item() for value in presence_probs.std(0)]
+    l2_probs_12 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
+    l2_probs_13 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
+    l2_probs_23 = torch.norm(
+        presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
+
+    for num, item in enumerate(mean_per_capsule):
+        stats['capsule_prob_mean_%d' % num] = item
+    for num, item in enumerate(std_per_capsule):
+        stats['capsule_prob_std_%d' % num] = item
+
+    stats.update({
+        'within_entropy': within_entropy.item(),
+        'between_entropy': between_entropy.item(),
+        'mean_max_prob': max_values.mean().item(),
+        'mean_min_prob': min_values.mean().item(),
+        'mean_prob': presence_probs_first.mean().item(),
+        'l2_presence_probs_12': l2_probs_12.item(),
+        'l2_presence_probs_13': l2_probs_13.item(),
+        'l2_presence_probs_23': l2_probs_23.item(),
+    })
+
+    # Get the frame distance stats.
+    sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
+    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+    segment_12 = pose[:, 1, :] - pose[:, 0, :]
+    segment_13 = pose[:, 2, :] - pose[:, 0, :]
+    segment_23 = pose[:, 2, :] - pose[:, 1, :]
+    stats.update({
+        'frame_12_sim': sim_12.item(),
+        'frame_23_sim': sim_23.item(),
+        'frame_13_sim': sim_13.item(),
+        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+    })
+
+    return loss, stats
+
+def old_get_nceprobs_selective_reorder_loss(model, images, labels, args):
+    # Change view so that we can put everything through the model at once.
+    batch_size, num_images = images.shape[:2]
+    images = images.view(batch_size * num_images, *images.shape[2:])
+    pose, presence_probs = model(images, return_ordering_selection=args.nceprobs_selection)
+    pose = pose.view(batch_size, num_images, *pose.shape[1:])
+    presence_probs_image = presence_probs.view(
+        batch_size, num_images, -1)
+
+    stats = {}
+    loss = 0.
+
+    # Get the loss for the nce over probs.
+    nce, stats_ = _do_simclr_nce(args.nce_presence_temperature,
+                                 presence_probs_image)
+    loss += nce * args.nce_presence_lambda
+    stats.update(stats_)
+
+    presence_probs_image_detached = presence_probs_image.detach()
+    if args.nceprobs_selection == 'ncelinear_maxfirst':
+        max_indices = torch.argmax(presence_probs_image_detached[:, 0], dim=1)
+        # shape of pose is [bs, nimg, ncaps, ndim], shape of indices is [bs].
+        # Now we want to get the nth index from max_indices from the nth batch
+        # entry and then combine them again.
+        selected_capsules = torch.stack(
+            [pose[num, :, index] for num, index in enumerate(max_indices)]
+        )
+        print(selected_capsules.shape)
+        max_unique, max_counts = torch.unique(max_indices, return_counts=True)
+        max_counts = max_counts.float()
+        max_unique_counts, _ = torch.max(max_counts, 0)
+        mean_unique_counts = torch.mean(max_counts)
+        stats.update({
+            'max_count_maximally_activate_capsule': max_unique_counts.item(),
+            'mean_count_maximally_activate_capsule': mean_unique_counts.item(),
+        })
+
+        ordering = model(selected_capsules.view(batch_size, -1), return_ordering=True).squeeze(-1)
+        labels = labels.squeeze(-1).float().to(ordering.device)
+        ordering_loss = F.binary_cross_entropy_with_logits(ordering, labels)
+        loss += ordering_loss * args.lambda_ordering
+
+        predictions = torch.sigmoid(ordering) > 0.5
+        accuracy = (predictions == labels).float().mean().item()
+
+        stats.update({
+            'accuracy': accuracy,
+            'ordering_loss': ordering_loss.item()
+        })
+
+        # Get the capsule distance stats.
+        sim_12 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 1, :])
+        sim_23 = torch.dist(selected_capsules[:, 1, :], selected_capsules[:, 2, :])
+        sim_13 = torch.dist(selected_capsules[:, 0, :], selected_capsules[:, 2, :])
+        stats.update({
+            'capsule_12_sim': sim_12.item(),
+            'capsule_23_sim': sim_23.item(),
+            'capsule_13_sim': sim_13.item(),
+        })
+    elif args.nceprobs_selection == 'ncelinear_threshfirst':
+        pass
+    else:
+        raise
+
+    # Get the probability stats
+    presence_probs_first = presence_probs_image[:, 0]
+    presence_probs_sum1 = presence_probs_first.sum(dim=1, keepdim=True) + 1e-8
+    within_presence = presence_probs_first / presence_probs_sum1 + 1e-8
+    within_entropy = -within_presence * torch.log(within_presence) / np.log(2)
+    within_entropy = within_entropy.sum(1)
+    within_entropy = within_entropy.mean()
+
+    presence_probs_sum0 = presence_probs_first.sum(dim=0) + 1e-8
+    presence_probs_sum0_distr = presence_probs_sum0 / presence_probs_sum0.sum(0)
+    between_entropy = -presence_probs_sum0_distr * torch.log(presence_probs_sum0_distr) / np.log(2)
+    between_entropy = between_entropy.mean(0)
+
+    max_values, _ = torch.max(presence_probs_first, 1)
+    min_values, _ = torch.min(presence_probs_first, 1)
+    mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
+    std_per_capsule = [value.item() for value in presence_probs.std(0)]
+    l2_probs_12 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 1], dim=1).mean()
+    l2_probs_13 = torch.norm(
+        presence_probs_image[:, 0] - presence_probs_image[:, 2], dim=1).mean()
+    l2_probs_23 = torch.norm(
+        presence_probs_image[:, 1] - presence_probs_image[:, 2], dim=1).mean()
+
+    for num, item in enumerate(mean_per_capsule):
+        stats['capsule_prob_mean_%d' % num] = item
+    for num, item in enumerate(std_per_capsule):
+        stats['capsule_prob_std_%d' % num] = item
+
+    stats.update({
+        'within_entropy': within_entropy.item(),
+        'between_entropy': between_entropy.item(),
+        'mean_max_prob': max_values.mean().item(),
+        'mean_min_prob': min_values.mean().item(),
+        'mean_prob': presence_probs_first.mean().item(),
+        'l2_presence_probs_12': l2_probs_12.item(),
+        'l2_presence_probs_13': l2_probs_13.item(),
+        'l2_presence_probs_23': l2_probs_23.item(),
+    })
 
     # Get the frame distance stats.
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])

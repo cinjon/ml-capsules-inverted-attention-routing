@@ -26,7 +26,7 @@ class MovingMNISTClassSampler(data.Sampler):
         index_by_label = defaultdict(list)
         for index, label in enumerate(data_source.labels):
             index_by_label[int(label)].append(index)
-        self.index_by_label = index_by_label        
+        self.index_by_label = index_by_label
         self.total_num_samples = len(data_source.labels)
         self.num_replicas = num_replicas
         self.num_samples = int(
@@ -47,7 +47,7 @@ class MovingMNISTClassSampler(data.Sampler):
             random.seed(self.epoch)
             for index, lst in index_by_label.items():
                 random.shuffle(lst)
-        
+
         indices = []
         row = 0
         while len(indices) < self.total_num_samples:
@@ -83,7 +83,11 @@ class MovingMNIST(data.Dataset):
                  use_diff_class_digit=False,
                  is_affnist=False, no_hit_side=False,
                  discrete_angle=False, center_discrete=False,
-                 center_discrete_count=1):
+                 center_discrete_count=1,
+                 mnist_padding=False):
+        if mnist_padding:
+            image_size = 28
+
         self.root = root
         self.is_three_images = is_three_images
         self.is_reorder_loss = is_reorder_loss
@@ -100,6 +104,8 @@ class MovingMNIST(data.Dataset):
                 # RandomApply([ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8),
                 ToTensor()
             ])
+
+        self.mnist_padding = mnist_padding
 
         self.is_affnist = is_affnist
         if is_affnist:
@@ -194,6 +200,20 @@ class MovingMNIST(data.Dataset):
         # datum is [3 1, 64, 64]
         if self.use_simclr_xforms:
             datum = transform(datum, self.xforms)
+        elif self.mnist_padding:
+            pad_left = np.random.randint(13)
+            pad_top = np.random.randint(13)
+
+            datum = datum[::-1]
+            datum = np.concatenate([
+                np.zeros((datum.shape[0], 1, datum.shape[2], pad_left)),
+                datum,
+                np.zeros((datum.shape[0], 1, datum.shape[2], 12-pad_left))], axis=3)
+            datum = np.concatenate([
+                np.zeros((datum.shape[0], 1, pad_top, datum.shape[3])),
+                datum,
+                np.zeros((datum.shape[0], 1, 12-pad_top, datum.shape[3]))], axis=2)
+            datum = torch.from_numpy(datum).float()
         else:
             datum = torch.from_numpy(datum)
         label = torch.from_numpy(np.array(label))
@@ -317,7 +337,7 @@ class _BouncingMNISTDataHandler(object):
                 # Take a step along velocity.
                 y += v_y * self.step_length_
                 x += v_x * self.step_length_
-                
+
                 # Bounce off edges.
                 for j in range(num_digits):
                     if x[j] <= 0:
@@ -389,7 +409,7 @@ class _BouncingMNISTDataHandler(object):
             label.append(self.labels_[ind])
 
             # generate video
-            labels_used = [label[-1]]                
+            labels_used = [label[-1]]
             for i in range(self.seq_length_):
                 if i > 0 and self.use_diff_class_digit:
                     index_label = int(label[-1])

@@ -10,6 +10,7 @@ do_jobs for the ones above are False.
 from run_on_cluster import do_jobarray
 import os
 import socket
+import getpass
 hostname = socket.gethostname()
 is_cims = any([
     hostname.startswith('cassio'),
@@ -25,7 +26,11 @@ if is_cims or is_dgx:
 elif is_prince:
     code_directory = '/home/cr2668/Code/ml-capsules-inverted-attention-routing'
 else:
-    raise
+    if getpass.getuser() == 'zz2332':
+        code_directory = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping'
+        email = 'zz2332@nyu.edu'
+    else:
+        raise
 
 
 def run(find_counter=None):
@@ -674,7 +679,7 @@ def run(find_counter=None):
         'triangle_cos_lambda': 1.,
         # 'no_use_hinge_loss': True,
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_prior_sparsity_example', 'sigmoid_prior_sparsity',
             'sigmoid_within_entropy', 'sigmoid_within_between_entropy',
@@ -697,7 +702,7 @@ def run(find_counter=None):
         'triangle_cos_lambda': 1.,
         'lr': 1e-4
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'softmax_within_between_entropy',
             'sigmoid_prior_sparsity_example'
@@ -712,7 +717,7 @@ def run(find_counter=None):
 
 
     # Here, we try it with just nce and presence. With that, we can increase
-    # the batch size. ... 
+    # the batch size. ...
     # Counter: 313
     job.update({
         'name': '2020.05.04',
@@ -722,7 +727,7 @@ def run(find_counter=None):
         'num_output_classes': 10,
         'batch_size': 24,
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_prior_sparsity',
             'sigmoid_prior_sparsity_example_between_entropy'
@@ -752,7 +757,7 @@ def run(find_counter=None):
     # that happening is the capsule_presence_loss, which is what pushes the
     # model to spread weight amongst the capsules. The between entropy is also
     # supposed to do that though.
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_prior_sparsity', # <-- Collapsed with 0 within and between entropy. It's really hard.
             'sigmoid_prior_sparsity_example_between_entropy',
@@ -783,7 +788,7 @@ def run(find_counter=None):
         'num_gpus': 3,
         'batch_size': 30 # On the dgx.
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_within_between_entropy',
         ],
@@ -805,13 +810,13 @@ def run(find_counter=None):
         'no_use_hinge_loss': True,
         'num_output_classes': 10,
         'lambda_between_entropy': 3.0,
-        'lambda_within_entropy': 100.0, 
+        'lambda_within_entropy': 100.0,
         'lr': 3e-4,
         'num_workers': 4,
         'num_gpus': 1,
         'batch_size': 24, # on the regular.
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'squash_prior_sparsity', 'squash_within_between_entropy'
         ],
@@ -837,7 +842,7 @@ def run(find_counter=None):
         'num_gpus': num_gpus,
         'batch_size': 24,
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'squash_example_between',
         ],
@@ -867,7 +872,7 @@ def run(find_counter=None):
         'num_gpus': num_gpus,
         'batch_size': 24, # on the regular.
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'squash_prior_sparsity_nomul', # <-- went to .05 for everything.
         ],
@@ -892,7 +897,7 @@ def run(find_counter=None):
         'batch_size': 24,
         'lambda_within_entropy': 100.0,
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'squash_within_between_entropy_nomul',
             'squash_example_between_nomul' # <-- .05 for everything. we know this by the wihthin entropy.
@@ -920,7 +925,7 @@ def run(find_counter=None):
         'lambda_within_entropy': 1.0,
         'presence_diffcos_lambda': 10.0,
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'squash_cossim',
             'sigmoid_cossim',
@@ -959,7 +964,7 @@ def run(find_counter=None):
         'batch_size': 24,
         'use_class_sampler': True
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_prior_sparsity_fix',
         ],
@@ -987,14 +992,14 @@ def run(find_counter=None):
         'lambda_within_entropy': 1.0,
         'use_class_sampler': False
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_l1_between',
-            'sigmoid_prior_sparsity_between_entropy_fix', 
+            'sigmoid_prior_sparsity_between_entropy_fix',
             'sigmoid_prior_sparsity_within_between_entropy_fix',
             # dafuk is this below: https://www.comet.ml/cinjon/capsules/f3b85483692d48299040f6618c1093b0.
             # ok, it just has more that are on.
-            'sigmoid_within_between_entropy', 
+            'sigmoid_within_between_entropy',
             'squash_prior_sparsity_within_entropy_fix',
             'squash_prior_sparsity_within_entropy_nomul_fix',
             'sigmoid_prior_sparsity_fix_nospike'
@@ -1025,7 +1030,7 @@ def run(find_counter=None):
         'use_class_sampler': False,
         'name': '2020.05.05',
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_only'
         ],
@@ -1060,7 +1065,7 @@ def run(find_counter=None):
         'name': '2020.05.06',
         'presence_loss_type': 'sigmoid_only'
     })
-    var_arrays = {        
+    var_arrays = {
         'config': [
             'resnet_backbone_movingmnist2_10ccgray',
             'resnet_backbone_movingmnist2_20ccgray'
@@ -1095,7 +1100,7 @@ def run(find_counter=None):
         'presence_loss_type': 'sigmoid_only',
         'use_simclr_xforms': True
     })
-    var_arrays = {        
+    var_arrays = {
         'config': [
             'resnet_backbone_movingmnist2_20ccgray',
             'resnet_backbone_movingmnist2_30ccgray'
@@ -1129,7 +1134,7 @@ def run(find_counter=None):
         'name': '2020.05.06',
         'use_simclr_xforms': True
     })
-    var_arrays = {        
+    var_arrays = {
         'presence_loss_type': [
             'sigmoid_prior_sparsity_fix',
             'sigmoid_prior_sparsity_within_between_entropy_fix',
@@ -1364,7 +1369,7 @@ def run(find_counter=None):
 
 
     # Ugh, I never actually lowered the temp below 0.5 to try that out and get the
-    # value more spread. 
+    # value more spread.
     # Counter:  391
     num_gpus = 2
     job.update({
@@ -1876,7 +1881,7 @@ def run(find_counter=None):
         'center_discrete_count': 3,
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12',
-        'num_routing': 1 
+        'num_routing': 1
     })
     var_arrays = {
         'seed': [1, 2],
@@ -1994,7 +1999,7 @@ def run(find_counter=None):
         'center_discrete_count': 3,
         'presence_loss_type': 'l2norm',
         'simclr_selection_strategy': 'anchor0_other12',
-        'num_routing': 1 
+        'num_routing': 1
     })
     var_arrays = {
         'seed': [0, 1]
@@ -2051,7 +2056,7 @@ def run(find_counter=None):
 
     return None, None
 
-            
-                                
+
+
 if __name__ == '__main__':
     run()

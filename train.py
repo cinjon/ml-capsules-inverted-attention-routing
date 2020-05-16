@@ -321,7 +321,7 @@ def get_loaders(args, rank=0):
         data_root = args.data_root
         train_set = MovingMNist2(data_root, train=True, seq_len=5,
                                  image_size=args.image_size, colored=args.colored, tiny=False,
-                                 is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
+                                 is_three_images='triangle' in args.criterion or ('selective' in args.criterion and 'reorder' not in args.criterion),
                                  is_reorder_loss='reorder' in args.criterion,
                                  num_digits=args.num_mnist_digits,
                                  center_start=args.fix_moving_mnist_center,
@@ -333,7 +333,8 @@ def get_loaders(args, rank=0):
                                  is_affnist=False, no_hit_side=args.no_hit_side,
                                  discrete_angle=args.discrete_angle,
                                  center_discrete=args.center_discrete,
-                                 center_discrete_count=args.center_discrete_count)
+                                 center_discrete_count=args.center_discrete_count,
+                                 mnist_padding=args.mnist_padding)
         test_set = MovingMNist2(args.data_root, train=False, seq_len=5,
                                 image_size=args.image_size, colored=args.colored, tiny=False,
                                 is_three_images='triangle' in args.criterion or 'selective' in args.criterion,
@@ -347,7 +348,8 @@ def get_loaders(args, rank=0):
                                 no_hit_side=args.no_hit_side,
                                 discrete_angle=args.discrete_angle,
                                 center_discrete=args.center_discrete,
-                                center_discrete_count=args.center_discrete_count)
+                                center_discrete_count=args.center_discrete_count,
+                                mnist_padding=args.mnist_padding)
         # affnist_root = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/affnist'
         affnist_test_set = AffNist(
             args.affnist_root, train=False, subset=args.affnist_subset,
@@ -781,6 +783,17 @@ def train(epoch, step, net, optimizer, criterion, loader, args, device, comet_ex
                 averages[key].add(value)
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items()])
+        elif criterion == 'selective_reorder':
+            images = images.cuda(device)
+            loss, stats = capsule_time_model.get_nceprobs_selective_reorder_loss(net, images, labels, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
         elif criterion in ['triangle', 'triangle_cos', 'triangle_margin',
                            'triangle_margin2', 'triangle_margin2_angle']:
             images = images.cuda(device)
@@ -969,6 +982,17 @@ def test(epoch, step, net, criterion, loader, args, device, store_dir=None, come
                     averages[key].add(value)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items()])
+            elif criterion == 'selective_reorder':
+                images = images.cuda(device)
+                loss, stats = capsule_time_model.get_nceprobs_selective_reorder_loss(net, images, labels, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
             elif criterion == 'reorder2':
                 loss, stats = capsule_time_model.get_reorder_loss2(net, images, device, args, labels=labels)
                 averages['loss'].add(loss.item())
@@ -1125,7 +1149,8 @@ def main(gpu, args, port=12355):
             presence_temperature=args.presence_temperature,
             presence_loss_type=args.presence_loss_type,
             do_capsule_computation=do_capsule_computation,
-            do_discriminative_probs=args.criterion == 'discriminative_probs'
+            do_discriminative_probs=args.criterion == 'discriminative_probs',
+            do_selective_reorder=args.criterion == 'selective_reorder'
         )
 
     if args.optimizer == 'adam':
@@ -1669,6 +1694,8 @@ if __name__ == '__main__':
                         help='step length in movingmnist2 sequence')
     parser.add_argument('--image_size', type=int, default=64,
                         help='what image size to use.')
+    parser.add_argument('--mnist_padding', action='store_true',
+                        help='whether to use fixed center padded mnist instead of moving mnist')
 
     # Linpred Info
     parser.add_argument('--linpred_test_only', action='store_true',
@@ -1687,7 +1714,7 @@ if __name__ == '__main__':
                         help='weight decay')
     parser.add_argument('--mnist_classifier_strategy', type=str, default='pose',
                         help='what strategy to do from pose, presence-pose, presence.')
-    parser.add_argument('--affnist_dataaset_loader', type=str, default='affnist',
+    parser.add_argument('--affnist_dataset_loader', type=str, default='affnist',
                         help='what dataset to use for loading affnist.')
 
     # TSNE info
@@ -1719,6 +1746,9 @@ if __name__ == '__main__':
     args.use_hinge_loss = not args.no_use_hinge_loss
     args.use_nce_loss = not args.no_use_nce_loss
     args.simclr_do_norm = not args.simclr_no_norm
+
+    # DEBUG
+    args.nceprobs_selection_temperature = 1
 
     # Doing LinPred.
     # args.linpred_test_only = True
