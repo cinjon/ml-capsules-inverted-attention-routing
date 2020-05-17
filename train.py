@@ -1223,12 +1223,14 @@ def main(gpu, args, port=12355):
     print('Total Params %d' % total_params)
 
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-    if args.name and args.counter is not None:
+    if args.linpred_test_only:
+        store_dir = None
+    elif args.name and args.counter is not None:
         store_dir = os.path.join(args.results_dir, args.name,
                                  str(args.counter), today)
     else:
         store_dir = os.path.join(args.results_dir, today)
-    if gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
+    if not args.linpred_test_only and gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
     torch.cuda.set_device(gpu)
@@ -1257,7 +1259,7 @@ def main(gpu, args, port=12355):
     }
 
     total_epochs = args.epoch
-    if not args.debug:
+    if not args.linpred_test_only and not args.debug:
         store_file = 'dataset_%s_num_routing_%s_backbone_%s.dct' % (
             str(args.dataset), str(args.num_routing), args.backbone
         )
@@ -1317,7 +1319,7 @@ def main(gpu, args, port=12355):
             args.presence_loss_type, do_capsule_computation, args.mnist_lr,
             args.mnist_weight_decay, args.affnist_subset, args.step_length,
             args.mnist_classifier_strategy, args.affnist_dataset_loader,
-            args.resume_dir)
+            args.resume_dir, args.image_size)
         print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
         return
     # else:
@@ -1742,6 +1744,8 @@ if __name__ == '__main__':
                         help='what image size to use.')
     parser.add_argument('--mnist_padding', action='store_true',
                         help='whether to use fixed center padded mnist instead of moving mnist')
+    parser.add_argument('--mnist_padding_count', default=6, type=int,
+                        help='how much paddding to use in mnist_padding.')
 
     # Linpred Info
     parser.add_argument('--linpred_test_only', action='store_true',
@@ -1774,7 +1778,9 @@ if __name__ == '__main__':
         jobid = int(os.getenv('SLURM_ARRAY_TASK_ID'))
         user = getpass.getuser()
         user = 'cinjon' if user in ['cr2668', 'resnick'] else 'zeping'
-        if user == 'cinjon':
+        if jobid in [2, 5]:
+            counter, job = zeping_jobs.run(find_counter=jobid)
+        elif user == 'cinjon':
             counter, job = cinjon_jobs.run(find_counter=jobid)
         elif user == 'zeping':
             counter, job = zeping_jobs.run(find_counter=jobid)
@@ -1797,51 +1803,63 @@ if __name__ == '__main__':
     args.nceprobs_selection_temperature = 1
 
     # Doing LinPred.
-    # args.linpred_test_only = True
-    # args.num_gpus = 1
-    # args.mnist_classifier_strategy = 'presence'
-    # args.affnist_dataset_loader = 'movingmnist'
-    # base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
-    # args.seed = 1000
-    # if is_prince:
-    #     base_dir = '/beegfs/cr2668/vidcaps/results'
+    args.linpred_test_only = True
+    args.num_gpus = 1
+    args.mnist_classifier_strategy = 'presence'
+    args.affnist_dataset_loader = 'movingmnist'
+    base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results'
+    args.seed = 1000
+    if is_prince:
+        base_dir = '/beegfs/cr2668/vidcaps/results'
 
-    # if args.counter == 433:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.13/433/2020-05-13-16-30-13'
-    #     )
-    #     args.resume_epoch = 72
-    # elif args.counter == 434:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.13/434/2020-05-13-11-13-11'
-    #     )
-    #     args.resume_epoch = 36
-    # elif args.counter == 444:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.14/444/2020-05-14-15-50-19'
-    #     )
-    #     args.resume_epoch = 48
-    # elif args.counter == 445:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.14/445/2020-05-14-16-28-48'
-    #     )
-    #     args.resume_epoch = 48
-    # elif args.counter == 446:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.15/446/2020-05-15-10-08-35'
-    #     )
-    #     args.resume_epoch = 12
-    # elif args.counter == 447:
-    #     args.resume_dir = os.path.join(
-    #         base_dir,
-    #         '2020.05.15/447/2020-05-15-10-09-02'
-    #     )
-    #     args.resume_epoch = 12
-
+    if args.counter == 433:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.13/433/2020-05-13-16-30-13'
+        )
+        args.resume_epoch = 72
+    elif args.counter == 434:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.13/434/2020-05-13-11-13-11'
+        )
+        args.resume_epoch = 36
+    elif args.counter == 444:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.14/444/2020-05-14-15-50-19'
+        )
+        args.resume_epoch = 48
+    elif args.counter == 445:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.14/445/2020-05-14-16-28-48'
+        )
+        args.resume_epoch = 48
+    elif args.counter == 446:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.15/446/2020-05-15-10-08-35'
+        )
+        args.resume_epoch = 12
+    elif args.counter == 447:
+        args.resume_dir = os.path.join(
+            base_dir,
+            '2020.05.15/447/2020-05-15-10-09-02'
+        )
+        args.resume_epoch = 12
+    elif args.counter == 2:
+        args.resume_dir = os.path.join(
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules',
+            'results/2020.05.16/2/2020-05-16-18-31-49'
+        )
+        args.resume_epoch = 12
+    elif args.counter == 5:
+        args.resume_dir = os.path.join(
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules',
+            'results/2020.05.15/5/2020-05-17-02-13-11'
+        )
+        args.resume_epoch = 45 # 12, 21, 27, 45
+        
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
