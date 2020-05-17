@@ -84,7 +84,7 @@ class MovingMNIST(data.Dataset):
                  is_affnist=False, no_hit_side=False,
                  discrete_angle=False, center_discrete=False,
                  center_discrete_count=1,
-                 mnist_padding=False):
+                 mnist_padding=False, mnist_padding_count=6):
         if mnist_padding:
             image_size = 28
 
@@ -106,6 +106,7 @@ class MovingMNIST(data.Dataset):
             ])
 
         self.mnist_padding = mnist_padding
+        self.mnist_padding_count = mnist_padding_count
 
         self.is_affnist = is_affnist
         if is_affnist:
@@ -201,19 +202,18 @@ class MovingMNIST(data.Dataset):
         if self.use_simclr_xforms:
             datum = transform(datum, self.xforms)
         elif self.mnist_padding:
-            pad_left = np.random.randint(13)
-            pad_top = np.random.randint(13)
-
+            # We want to always make it 40x40, but we might not want to shift
+            # around that much.
+            ret = np.zeros((datum.shape[0], 1, 40, 40), dtype=np.float32)
+            pad_left = np.random.randint(low=6-self.mnist_padding_count,
+                                         high=6+self.mnist_padding_count)
+            pad_top = np.random.randint(low=6-self.mnist_padding_count,
+                                        high=6+self.mnist_padding_count)
             datum = datum[::-1]
-            datum = np.concatenate([
-                np.zeros((datum.shape[0], 1, datum.shape[2], pad_left)),
-                datum,
-                np.zeros((datum.shape[0], 1, datum.shape[2], 12-pad_left))], axis=3)
-            datum = np.concatenate([
-                np.zeros((datum.shape[0], 1, pad_top, datum.shape[3])),
-                datum,
-                np.zeros((datum.shape[0], 1, 12-pad_top, datum.shape[3]))], axis=2)
-            datum = torch.from_numpy(datum).float()
+            bottom = pad_top + datum.shape[2]
+            right = pad_left + datum.shape[3]
+            ret[:, :, pad_top:bottom, pad_left:right] = datum
+            datum = torch.from_numpy(ret).float()
         else:
             datum = torch.from_numpy(datum)
         label = torch.from_numpy(np.array(label))
