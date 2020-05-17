@@ -494,7 +494,7 @@ class _ColoredBouncingMNISTDataHandler(_BouncingMNISTDataHandler):
             # generate video
             for i in range(self.seq_length_):
                 # if i > 0 and self.use_diff_class_digit:
-                if self.use_diff_class_digit: 
+                if self.use_diff_class_digit:
                     index_label = int(self.labels_[ind])
                     if self.index_rows[index_label] == len(self.index_by_label[index_label]):
                         self.index_rows[index_label] = 0
