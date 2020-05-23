@@ -26,13 +26,12 @@ class ShapeNet55(torch.utils.data.Dataset):
         self.use_diff_object = use_diff_object
         assert len(self.momentum_range) == 2
 
-        self.total_data = dict(np.load(self.path))['data']
+        npz = dict(np.load(self.path))
+        self.total_data = npz['data']
         self.original_sample_num = self.total_data.shape[1]
         assert self.npoints <= self.original_sample_num
 
-        # NOTE: this is just a placeholder for real labels
-        self.lbls = np.random.choice(
-            55, len(self.total_data), replace=True)
+        self.lbls = npz['lbls']
         self.lbl_dict = {
             i: np.where(self.lbls == i)[0] for i in range(55)}
 
@@ -60,7 +59,7 @@ class ShapeNet55(torch.utils.data.Dataset):
         for i in range(1, self.num_frames):
             sample[i] += i * momentum
 
-        return torch.from_numpy(sample)
+        return torch.from_numpy(sample), lbl
 
     def _get_pc(self, index):
         pc = self.total_data[index].copy()
@@ -74,7 +73,7 @@ class ShapeNet55(torch.utils.data.Dataset):
                 self.original_sample_num, self.npoints, replace=False)
             pc = pc[rand_idx]
 
-        return pc, lbl
+        return pc
 
     def __len__(self):
         return len(self.total_data)
