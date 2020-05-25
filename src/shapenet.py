@@ -1,6 +1,6 @@
 import random
-import numpy as np
 
+import numpy as np
 import torch
 
 lbl_dict = {
@@ -61,6 +61,7 @@ lbl_dict = {
     '04554684': 54
 }
 
+
 def pc_normalize(pc):
     l = pc.shape[0]
     centroid = np.mean(pc, axis=0)
@@ -68,6 +69,7 @@ def pc_normalize(pc):
     m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
     pc = pc / m
     return pc
+
 
 class ShapeNet55(torch.utils.data.Dataset):
     def __init__(self, path, split='train', npoints=2048, num_frames=3,
