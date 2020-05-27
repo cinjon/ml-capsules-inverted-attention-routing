@@ -1,6 +1,9 @@
+import math
+import os
 import random
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 import torch
 
 lbl_dict = {
@@ -72,15 +75,34 @@ def pc_normalize(pc):
 
 
 class ShapeNet55(torch.utils.data.Dataset):
+    """
+    NOTE: The Geometric Capsuels paper does a random rotation and translation
+    to the viewpoints. 
+    - Random rotation for the multi-view appointments: [-pi/4, pi/4]
+    - Actual input points are translated by random vector in [-1, 1]^3 and
+      rotated about a random axis and random angle in -180, 180.
+      So ... that's everything. Wtf? It sees every angle. Ok...
+
+    We are doing the translation along stepsize * [1, 1, 1]. When stepsize is
+    random in (-1, 1), this is still not a random translation in [-1, 1]^3. To
+    get that, we'd need to pick it randomly for *each* direction.    
+    """
     def __init__(self, path, split='train', npoints=2048, num_frames=3,
-                 momentum_range=(-1, 1), use_diff_object=True):
+                 use_diff_object=True, stepsize_range=None, stepsize_fixed=None,
+                 rotation_range=None, rotation_same=None):
         self.path = path
         self.split = split
         self.npoints = npoints # number of points to use
         self.num_frames = num_frames
-        self.momentum_range = momentum_range
+        self.stepsize_range = stepsize_range
+        self.stepsize_fixed = stepsize_fixed
         self.use_diff_object = use_diff_object
-        assert len(self.momentum_range) == 2
+        self.rotation_range = rotation_range
+        self.rotation_same = rotation_same
+
+        if self.stepsize_fixed is None:
+            assert len(self.stepsize_range) == 2
+
         assert self.split in ['train', 'test', 'val']
         self.path = os.path.join(self.path, self.split)
 
@@ -94,7 +116,8 @@ class ShapeNet55(torch.utils.data.Dataset):
 
         self.lbls = np.array(self.lbls)
         self.lbl_dict = {
-            i: np.where(self.lbls == i)[0] for i in range(55)}
+            i: np.where(self.lbls == i)[0] for i in range(55)
+        }
 
     def __getitem__(self, index):
         sample = np.load(self.npy_paths[index])
@@ -112,29 +135,57 @@ class ShapeNet55(torch.utils.data.Dataset):
                     sample[len(indices)] = self.pc_preprocess(np.load(self.npy_paths[temp_index]))
                     indices.append(temp_index)
 
+        # Rotation
+        if self.rotation_range is not None:
+            # rotation_range is a tuple of (degree_low, degree_high)
+            low, high = self.rotation_range
+            degrees = np.random.randint(low, high, self.num_frames)
+            axes = np.eye(3)[np.random.randint(0, 3, self.num_frames)]
+            if self.rotation_same:
+                degrees = [degrees[0]] * self.num_frames
+                axes = [axes[0]] * self.num_frames
+            radians = [d * math.pi / 180. for d in degrees]
+
+            for i in range(self.num_frames):
+                rotation = self.rotation_matrix(axes[i], radians[i])
+                sample[i] = rotation.apply(sample[i])
+
         # Translation
-        momentum = np.random.uniform(
-            self.momentum_range[0],
-            self.momentum_range[1],
-            self.num_frames)
+        if self.stepsize_fixed:
+            stepsize = [self.stepsize_fixed] * self.num_frames
+        else:
+            stepsize = np.random.uniform(
+            self.stepsize_range[0],
+            self.stepsize_range[1],
+            self.num_frames
+        )
 
         for i in range(1, self.num_frames):
-            sample[i] += i * momentum
+            sample[i] += i * stepsize[i]
 
-        return torch.from_numpy(sample), lbl
+        # Permute so the channels are in the right dim.
+        datum = torch.from_numpy(sample).permute(0, 2, 1).float()
+        return datum, lbl
 
     def pc_preprocess(self, pc):
         # pc = self.total_data[index].copy()
         pc = pc_normalize(pc)
 
         # Resample
-        # NOTE: in the 3d point capsule networks repo replace is
-        # True for some reasons
+        # NOTE: in the 3d point capsule networks repo replace is True.
         rand_idx = np.random.choice(
             2048, self.npoints, replace=False)
         pc = pc[rand_idx]
 
         return pc
+
+    @staticmethod
+    def rotation_matrix(axis, theta):
+        """
+        Return the rotation matrix associated with counterclockwise rotation about
+        the given axis by theta radians.
+        """
+        return R.from_rotvec(theta * axis)
 
     def __len__(self):
         return len(self.npy_paths)

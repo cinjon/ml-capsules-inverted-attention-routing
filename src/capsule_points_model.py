@@ -17,137 +17,130 @@ from src import layers_1d
 # Capsule model
 class CapsulePointsModel(nn.Module):
 
-    def __init__(self,
-                 params,
-                 backbone,
-                 num_routing,
-    ):
-        super(CapsTimeModel, self).__init__()
+    def __init__(self, params, args):
+        super(CapsulePointsModel, self).__init__()
         #### Parameters
 
-        ## Primary Capsule Layer
-        self.pc_num_caps = params['primary_capsules']['num_caps']
-        self.pc_caps_dim = params['primary_capsules']['caps_dim']
-        self.pc_output_dim = params['primary_capsules']['out_img_size']
-        self.num_routing = num_routing  # >3 may cause slow converging
+        self.num_routing = args.num_routing  # >3 may cause slow converging
+        self.presence_type = args.presence_type
 
-        #### Building Networks
-        ## Backbone (before capsule)
-        self.pre_caps = layers_1d.resnet_backbone(
-            params['backbone']['input_dim'],
-            params['backbone']['output_dim'],
-            params['backbone']['stride'])
+        #### Backbone is a ResNet that embeds each point.
+        backbone = params['backbone']
+        self.pre_caps = layers_1d.ResnetBackbone(backbone['input_dim'],
+                                                 backbone['output_dim'],
+                                                 backbone['stride'])
 
-        self.num_class_capsules = params['class_capsules']['num_caps']
-        self.is_discriminating_model = is_discriminating_model
 
-        ## Primary Capsule Layer (a single CNN)
-        self.pc_layer = nn.Conv2d(in_channels=params['primary_capsules']['input_dim'],
-                                  out_channels=params['primary_capsules']['num_caps'] *\
-                                  params['primary_capsules']['caps_dim'],
-                                  kernel_size=params['primary_capsules']['kernel_size'],
-                                  stride=params['primary_capsules']['stride'],
-                                  padding=params['primary_capsules']['padding'],
-                                  bias=False)
-
-        self.nonlinear_act = nn.LayerNorm(
-            params['primary_capsules']['caps_dim'])
+        ## Primary Capsule Layer. In the same spirit as the image version, we
+        # use a Conv here, but it has to be 1d. Maybe this should be a set
+        # transformer?
+        primary = params['primary_capsules']
+        self.pc_num_caps = primary['num_caps']
+        self.pc_caps_dim = primary['caps_dim']
+        self.pc_output_dim = primary['out_img_size']
+        self.pc_layer = nn.Conv1d(
+            in_channels=primary['input_dim'],
+            out_channels=primary['num_caps'] * primary['caps_dim'],
+            kernel_size=primary['kernel_size'],
+            stride=primary['stride'],
+            padding=primary['padding'],
+            bias=False)
+        self.layer_norm = nn.LayerNorm(primary['caps_dim'])
 
         ## Main Capsule Layers
         self.capsule_layers = nn.ModuleList([])
-        for i in range(len(params['capsules'])):
-            if params['capsules'][i]['type'] == 'CONV':
-                in_n_caps = params['primary_capsules']['num_caps'] if i==0 else \
-                                                               params['capsules'][i-1]['num_caps']
-                in_d_caps = params['primary_capsules']['caps_dim'] if i==0 else \
-                                                               params['capsules'][i-1]['caps_dim']
-                self.capsule_layers.append(
-                    layers.CapsuleCONV(
-                        in_n_capsules=in_n_caps,
-                        in_d_capsules=in_d_caps,
-                        out_n_capsules=params['capsules'][i]['num_caps'],
-                        out_d_capsules=params['capsules'][i]['caps_dim'],
-                        kernel_size=params['capsules'][i]['kernel_size'],
-                        stride=params['capsules'][i]['stride'],
-                        matrix_pose=params['capsules'][i]['matrix_pose'],
-                        dp=dp,
-                        coordinate_add=False))
-            elif params['capsules'][i]['type'] == 'FC':
+        capsules = params['capsules']
+        for i in range(len(capsules)):
+            if capsules[i]['type'] == 'CONV':
                 if i == 0:
-                    in_n_caps = params['primary_capsules']['num_caps'] * params['primary_capsules']['out_img_size'] *\
-                                                                                            params['primary_capsules']['out_img_size']
-                    in_d_caps = params['primary_capsules']['caps_dim']
-                elif params['capsules'][i - 1]['type'] == 'FC':
-                    in_n_caps = params['capsules'][i - 1]['num_caps']
-                    in_d_caps = params['capsules'][i - 1]['caps_dim']
-                elif params['capsules'][i - 1]['type'] == 'CONV':
-                    in_n_caps = params['capsules'][i-1]['num_caps'] * params['capsules'][i-1]['out_img_size'] *\
-                                                                                           params['capsules'][i-1]['out_img_size']
-                    in_d_caps = params['capsules'][i - 1]['caps_dim']
+                    in_n_caps = primary['num_caps']
+                    in_d_caps = primary['caps_dim']
+                else:
+                    in_n_caps = capsules[i-1]['num_caps']
+                    in_d_caps = capsules[i-1]['caps_dim']
+
                 self.capsule_layers.append(
-                    layers.CapsuleFC(
+                    layers_1d.CapsuleConv(
                         in_n_capsules=in_n_caps,
                         in_d_capsules=in_d_caps,
-                        out_n_capsules=params['capsules'][i]['num_caps'],
-                        out_d_capsules=params['capsules'][i]['caps_dim'],
-                        matrix_pose=params['capsules'][i]['matrix_pose'],
-                        dp=dp))
+                        out_n_capsules=capsules[i]['num_caps'],
+                        out_d_capsules=capsules[i]['caps_dim'],
+                        kernel_size=capsules[i]['kernel_size'],
+                        stride=capsules[i]['stride'],
+                    )
+                )
+            elif capsules[i]['type'] == 'FC':
+                if i == 0:
+                    in_n_caps = primary['num_caps'] * primary['out_img_size']
+                    in_d_caps = primary['caps_dim']
+                elif capsules[i - 1]['type'] == 'FC':
+                    in_n_caps = capsules[i - 1]['num_caps']
+                    in_d_caps = capsules[i - 1]['caps_dim']
+                elif capsules[i - 1]['type'] == 'CONV':
+                    in_n_caps = capsules[i-1]['num_caps'] * capsules[i-1]['out_img_size']
+                    in_d_caps = capsules[i - 1]['caps_dim']
+                self.capsule_layers.append(
+                    layers_1d.CapsuleFC(
+                        in_n_capsules=in_n_caps,
+                        in_d_capsules=in_d_caps,
+                        out_n_capsules=capsules[i]['num_caps'],
+                        out_d_capsules=capsules[i]['caps_dim']
+                    )
+                )
 
         ## Class Capsule Layer
-        if not len(params['capsules']) == 0:
-            if params['capsules'][-1]['type'] == 'FC':
-                in_n_caps = params['capsules'][-1]['num_caps']
-                in_d_caps = params['capsules'][-1]['caps_dim']
-            elif params['capsules'][-1]['type'] == 'CONV':
-                in_n_caps = params['capsules'][-1]['num_caps'] * params['capsules'][-1]['out_img_size'] *\
-                                                                                   params['capsules'][-1]['out_img_size']
-                in_d_caps = params['capsules'][-1]['caps_dim']
+        if not len(capsules) == 0:
+            if capsules[-1]['type'] == 'FC':
+                in_n_caps = capsules[-1]['num_caps']
+                in_d_caps = capsules[-1]['caps_dim']
+            elif capsules[-1]['type'] == 'CONV':
+                in_n_caps = capsules[-1]['num_caps'] * capsules[-1]['out_img_size']
+                in_d_caps = capsules[-1]['caps_dim']
         else:
-            in_n_caps = params['primary_capsules']['num_caps'] * params['primary_capsules']['out_img_size'] *\
-                params['primary_capsules']['out_img_size']
-            in_d_caps = params['primary_capsules']['caps_dim']
+            in_n_caps = primary['num_caps'] * primary['out_img_size']
+            in_d_caps = primary['caps_dim']
         self.capsule_layers.append(
-            layers.CapsuleFCPresenceObject(
+            layers_1d.CapsuleFC(
                 in_n_capsules=in_n_caps,
                 in_d_capsules=in_d_caps,
                 out_n_capsules=params['class_capsules']['num_caps'],
                 out_d_capsules=params['class_capsules']['caps_dim'],
-                matrix_pose=params['class_capsules']['matrix_pose'],
-                dp=dp,
-                object_dim=params['class_capsules']['object_dim'])
+            )
         )
 
-    def get_presence(self, pre_caps, final_pose):
-        # NOTE: This is assuming we are using l2norm as the presence probs
-        logits = final_pose.norm(dim=2)
-        return logits
+    def get_presence(self, final_pose):
+        if not self.presence_type:
+            return None
+        elif self.presence_type == 'l2norm':
+            return final_pose.norm(dim=2)
 
     def forward(self, x):
-        c = self.pre_caps(x)
+        # x: torch.Size([24, 3, 2048])
+        c = self.pre_caps(x)    
+        # precaps torch.Size([bs=24, backbone.output_dim=128, stride of 2 --> 1024])
 
         ## Primary Capsule Layer (a single CNN)
+        # u:  torch.Size([24, 512, 1024])
         u = self.pc_layer(c)
-        # dmm u.shape: [64, 1024, 8, 8]
-        u = u.permute(0, 2, 3, 1)
-        u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
-                   self.pc_num_caps, self.pc_caps_dim) # 100, 14, 14, 32, 16
-        u = u.permute(0, 3, 1, 2, 4)  # 100, 32, 14, 14, 16
-        init_capsule_value = self.nonlinear_act(u)  #capsule_utils.squash(u)
-        
+
+        u = u.permute(0, 2, 1)
+        u = u.view(u.shape[0], self.pc_output_dim, self.pc_num_caps, self.pc_caps_dim)
+        u = u.permute(0, 2, 1, 3)  # 100, 32, 14, 14, 16
+        init_capsule_value = self.layer_norm(u)  #capsule_utils.squash(u)
+
         ## Main Capsule Layers
         # concurrent routing
         # first iteration
         # perform initilialization for the capsule values as single forward passing
         capsule_values, _val = [init_capsule_value], init_capsule_value
         for i in range(len(self.capsule_layers)):
+            # TODO: Oh I see, so this problem happens only on CapsuleFC.
+            # init capsule 0: [24, 32, 511, 16]
+            # init capsule 1: [24, 32, 255, 16]
+            # Note that precaps is [24,128,1024] and u is [24,512,512] and x is [24,3,2048]
             _val = self.capsule_layers[i].forward(_val, 0)
-            # dmm:
-            # capsule 0 _val.shape: [64, 16, 6, 6, 64]
-            # capsule 1 _val.shape: [64, 10, 64]
-            # capsule 2 _val.shape: [64, 10, 64]
-            # get the capsule value for next layer
-            capsule_values.append(_val)
-            
+            capsule_values.append(_val)        
+
         # second to t iterations
         # perform the routing between capsule layers
         for n in range(self.num_routing - 1):
@@ -155,16 +148,13 @@ class CapsulePointsModel(nn.Module):
             for i in range(len(self.capsule_layers)):
                 _val = self.capsule_layers[i].forward(
                     capsule_values[i], n, capsule_values[i + 1])
-                # dmm:
-                # capsule 0 _val.shape: [64, 16, 6, 6, 64]
-                # capsule 1 _val.shape: [64, 10, 64]
-                # capsule 2 _val.shape: [64, 10, 64]
                 _capsule_values.append(_val)
             capsule_values = _capsule_values
                 
         ## After Capsule
         pose = capsule_values[-1]
-        return pose
+        presence = self.get_presence(pose)
+        return pose, presence
 
 
 def get_xent_loss(model, points, labels):
@@ -258,33 +248,27 @@ def get_nceprobs_selective_loss(model, points, device, epoch, args,
     # Change view so that we can put everything through the model at once.
     batch_size, num_points = points.shape[:2]
     points = points.view(batch_size * num_points, *points.shape[2:])
-    pose, presence_probs = model(points)
+    pose, presence = model(points)
     pose = pose.view(batch_size, num_points, *pose.shape[1:])
-    presence_probs_point = presence_probs.view(
-        batch_size, num_points, -1)
+    presence_point = presence.view(batch_size, num_points, *presence.shape[1:])
 
     stats = {}
     loss = 0.
 
     # Get the loss for the nce over probs.
     nce, stats_ = do_simclr_nce(
-        args.nce_presence_temperature, presence_probs_point,
-        selection_strategy=args.simclr_selection_strategy,
-        do_norm=args.simclr_do_norm)        
+        args.nce_presence_temperature, presence_point, do_norm=True,
+        selection_strategy=args.simclr_selection_strategy)
     loss += nce * args.nce_presence_lambda
     stats.update(stats_)
 
-    presence_probs_first = presence_probs_point[:, 0]
-    max_values, _ = torch.max(presence_probs_first, 1)
-    min_values, _ = torch.min(presence_probs_first, 1)
-    mean_per_capsule = [value.item() for value in presence_probs.mean(0)]
-    std_per_capsule = [value.item() for value in presence_probs.std(0)]
+    presence_first = presence_point[:, 0]
+    max_values, _ = torch.max(presence_first, 1)
+    min_values, _ = torch.min(presence_first, 1)
+    mean_per_capsule = [value.item() for value in presence.mean(0)]
+    std_per_capsule = [value.item() for value in presence.std(0)]
     l2_probs_12 = torch.norm(
-        presence_probs_point[:, 0] - presence_probs_point[:, 1], dim=1).mean()
-    l2_probs_13 = torch.norm(
-        presence_probs_point[:, 0] - presence_probs_point[:, 2], dim=1).mean()
-    l2_probs_23 = torch.norm(
-        presence_probs_point[:, 1] - presence_probs_point[:, 2], dim=1).mean()
+        presence_point[:, 0] - presence_point[:, 1], dim=1).mean()
     
     for num, item in enumerate(mean_per_capsule):
         stats['capsule_prob_mean_%d' % num] = item
@@ -294,24 +278,32 @@ def get_nceprobs_selective_loss(model, points, device, epoch, args,
     stats.update({
         'mean_max_l2norm': max_values.mean().item(),
         'mean_min_l2norm': min_values.mean().item(),
-        'mean_l2norm': presence_probs_first.mean().item(),
+        'mean_l2norm': presence_first.mean().item(),
         'l2_presence_l2norms_12': l2_probs_12.item(),
-        'l2_presence_l2norms_13': l2_probs_13.item(),
-        'l2_presence_l2norms_23': l2_probs_23.item(),
     })
 
     # Get the frame distance stats.
     sim_12 = torch.dist(pose[:, 0, :], pose[:, 1, :])
-    sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
-    sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
-    segment_12 = pose[:, 1, :] - pose[:, 0, :]
-    segment_13 = pose[:, 2, :] - pose[:, 0, :]
-    segment_23 = pose[:, 2, :] - pose[:, 1, :]
     stats.update({
         'frame_12_sim': sim_12.item(),
-        'frame_23_sim': sim_23.item(),
-        'frame_13_sim': sim_13.item(),
-        'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
     })
+
+    if presence_point.shape[1] == 3:
+        l2_probs_13 = torch.norm(
+            presence_point[:, 0] - presence_point[:, 2], dim=1).mean()
+        l2_probs_23 = torch.norm(
+            presence_point[:, 1] - presence_point[:, 2], dim=1).mean()
+        sim_23 = torch.dist(pose[:, 1, :], pose[:, 2, :])
+        sim_13 = torch.dist(pose[:, 0, :], pose[:, 2, :])
+        segment_12 = pose[:, 1, :] - pose[:, 0, :]
+        segment_13 = pose[:, 2, :] - pose[:, 0, :]
+        segment_23 = pose[:, 2, :] - pose[:, 1, :]
+        stats.update({
+            'l2_presence_l2norms_13': l2_probs_13.item(),
+            'l2_presence_l2norms_23': l2_probs_23.item(),
+            'frame_23_sim': sim_23.item(),
+            'frame_13_sim': sim_13.item(),
+            'triangle_margin': (sim_13 - sim_12 - sim_23).item(),
+        })
 
     return loss, stats

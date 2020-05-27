@@ -22,7 +22,6 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-from torchvision
 import torchvision.transforms as transforms
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -140,12 +139,50 @@ def count_parameters(model):
 
 
 def get_loaders(args, rank=0, is_tsne=False):
-    if args.dataset == 'points5':
-        root = os.path.join(args.data_root, 'dataset5')
-        train_set = ShapeNet55(root, use_diff_object=args.use_diff_object)
-    elif args.dataset == 'pointsFull':
-        root = os.path.join(args.data_root, 'datasetFull')
+    if 'shapenet' in args.dataset:
+        stepsize_range = [float(k) for k in args.shapenet_stepsize_range.split(',')]
+        stepsize_fixed = args.shapenet_stepsize_fixed
+        rotation_train = [float(k) for k in args.shapenet_rotation_train.split(',')]
+        rotation_test = [float(k) for k in args.shapenet_rotation_test.split(',')]
+        rotation_same = args.shapenet_rotation_same
+        root = os.path.join(args.data_root, args.dataset.replace('shapenet', 'dataset'))
+        train_set = ShapeNet55(
+            root, split='train', num_frames=args.num_frames,
+            stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+            use_diff_object=args.use_diff_object,
+            rotation_range=rotation_train, rotation_same=rotation_same)
+        test_set = ShapeNet55(
+            root, split='val', num_frames=args.num_frames,
+            stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+            use_diff_object=args.use_diff_object,
+            rotation_range=rotation_train, rotation_same=rotation_same)
 
+    if args.num_gpus == 1 or is_tsne:
+        train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                                   batch_size=args.batch_size,
+                                                   shuffle=True,
+                                                   num_workers=args.num_workers)
+    else:
+        print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+    	    train_set,
+    	    num_replicas=args.num_gpus,
+    	    rank=rank
+        )
+        train_loader = torch.utils.data.DataLoader(
+    	    dataset=train_set,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=1,
+            pin_memory=True,
+            sampler=train_sampler,
+            drop_last=True
+        )
+
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=args.batch_size,
+                                              shuffle=False,
+                                              num_workers=args.num_workers)
     print('Returning data loaders...')
     return train_loader, test_loader
 
@@ -178,7 +215,7 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
             points = points.view(batch_size * num_points, *points.shape[2:])
             labels = labels.squeeze()
             labels = labels.cuda(device)
-            loss, stats = capsule_time_model.get_xent_loss(net, points, labels)
+            loss, stats = capsule_points_model.get_xent_loss(net, points, labels)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
@@ -189,7 +226,7 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
             )
         elif criterion == 'nceprobs_selective':
             points = points.cuda(device)
-            loss, stats = capsule_time_model.get_nceprobs_selective_loss(
+            loss, stats = capsule_points_model.get_nceprobs_selective_loss(
                 net, points, device, epoch, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
@@ -268,7 +305,7 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                 points = points.view(batch_size * num_points, *points.shape[2:])
                 labels = labels.squeeze()
                 labels = labels.cuda(device)
-                loss, stats = capsule_time_model.get_xent_loss(net, points, labels)
+                loss, stats = capsule_points_model.get_xent_loss(net, points, labels)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -279,8 +316,8 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                 )
             elif criterion == 'nceprobs_selective':
                 points = points.cuda(device)
-                loss, stats = capsule_time_model.get_nceprobs_selective_loss(
-                    net, points, device, epoch, args, store_dir=store_dir)
+                loss, stats = capsule_points_model.get_nceprobs_selective_loss(
+                    net, points, device, epoch, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
@@ -290,32 +327,27 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
 
-            if comet_exp and batch_idx % 100 == 0 and batch_idx > 0:
+            if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
                 print(log_text.format(epoch + 1, batch_idx, len(loader),
                                       time.time() - t, averages['loss'].item())
                 )
                 t = time.time()
 
-        if comet_exp:
-            del points
-            torch.cuda.empty_cache()
+    del points
+    torch.cuda.empty_cache()
+    
+    extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                         for k, v in averages.items()])
+    log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+    print(log_text.format(epoch + 1, batch_idx, len(loader),
+                          time.time() - t, averages['loss'].item()))
+    test_loss = averages['loss'].item()
 
-            for key, value in stats.items():
-                if key not in averages:
-                    averages[key] = Averager()
-                averages[key].add(value)
-            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                 for k, v in averages.items()])
-            log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-            print(log_text.format(epoch + 1, batch_idx, len(loader),
-                                  time.time() - t, averages['loss'].item())
-            )
-
-            test_loss = averages['loss'].item()
-            with comet_exp.test():
-                epoch_avgs = {k: v.item() for k, v in averages.items()}
-                comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
+    if comet_exp:
+        with comet_exp.test():
+            epoch_avgs = {k: v.item() for k, v in averages.items()}
+            comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
 
     test_acc = averages['accuracy'].item() if 'accuracy' in averages else None
     return test_loss, test_acc
@@ -337,11 +369,8 @@ def main(gpu, args, port=12355):
     num_frames = 3
 
     print('==> Building model..')
-    net = capsule_time_model.CapsTimeModel(
-        config['params'],
-        args.backbone,
-        args.num_routing,
-    )
+    net = capsule_points_model.CapsulePointsModel(config['params'], args)
+    print(net)
 
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)                           
     scheduler = None
@@ -460,11 +489,6 @@ def main(gpu, args, port=12355):
             )
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
-        if gpu == 0 and not args.debug:
-            with open(store_file, 'wb') as f:
-                pickle.dump(results, f)
-
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -502,25 +526,24 @@ if __name__ == '__main__':
                         type=int,
                         help='number of routing. Recommended: 0,1,2,3.')
     parser.add_argument('--dataset',
-                        default='points5',
+                        default='shapenet5',
                         type=str,
-                        help='dataset: either points5 or pointsFull.')
+                        help='dataset: either shapenet5 or shapenetFull.')
+    parser.add_argument('--num_frames', default=2, type=int,
+                        help='how many frames to include in the input.')
     parser.add_argument('--use_diff_object',
                         action='store_true',
                         help='whether to use the class sampler with MovingMNist2')
-    parser.add_argument('--no_hit_side',
-                        action='store_true',
-                        help='whether to not let the mnist digits hit teh side.')
-    parser.add_argument('--center_discrete',
-                        action='store_true',
-                        help='whether to use discrete center for mnist')
-    parser.add_argument('--center_discrete_count',
-                        type=int,
-                        default=1,
-                        help='when 1, we just use the center. what number of positions to use from the center.')
-    parser.add_argument('--discrete_angle',
-                        action='store_true',
-                        help='whether to use just four directions for angle')
+    parser.add_argument('--shapenet_stepsize_range', type=str, default='1,1',
+                        help='comma separated 2-tuple of the stepsize bounds.')
+    parser.add_argument('--shapenet_stepsize_fixed', default=None, type=float,
+                        help='if fixing the step size between frames.')
+    parser.add_argument('--shapenet_rotation_train', type=str, default='-180,180',
+                        help='if given, is a comma separated 2-tuple of the allowed rotation degrees for train.')
+    parser.add_argument('--shapenet_rotation_test', type=str, default='-180,180',
+                        help='if given, is a comma separated 2-tuple of the allowed rotation degrees for test.')
+    parser.add_argument('--shapenet_rotation_same', action='store_true',
+                        help='whether we rotate the objects the same amount.')
     parser.add_argument('--data_root',
                         default='/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
                         type=str,
@@ -564,6 +587,11 @@ if __name__ == '__main__':
                         default=1.0,
                         type=float,
                         help='temperature to multiply with the similarity')
+    parser.add_argument('--nce_presence_lambda',
+                        default=1.0,
+                        type=float,
+                        help='lambda on the nce loss.')
+    parser.add_argument('--presence_type', default='l2norm', type=str)
     parser.add_argument('--use_scheduler',
                         action='store_true',
                         help='whether to use the scheduler or not.')

@@ -33,24 +33,19 @@ def run(find_counter=None):
     counter = 1
 
     job = {
-        'name': '2020.04.18',
-        'optimizer': 'adam',
-        'config': 'resnet_backbone_movingmnist2_2cc',
-        'criterion': 'triangle',
-        'triangle_lambda': 1,
+        'name': '2020.05.27',
+        'config': 'resnet_backbone_points5',
+        'criterion': 'nceprobs_selective',
         'num_routing': 1,
-        'dataset': 'MovingMNist2',
-        'batch_size': 12,
-        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results',
-        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/mnist'
+        'dataset': 'shapenet5',
+        'batch_size': 24,
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
     }
-
     num_gpus = 1
     time = 8
-    var_arrays = {
-        'lr': [.0003],
-        'triangle_lambda': [1., 3.],
-    }
+    var_arrays = {}
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)
