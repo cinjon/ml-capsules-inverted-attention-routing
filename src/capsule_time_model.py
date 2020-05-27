@@ -258,15 +258,18 @@ class CapsTimeModel(nn.Module):
         # [batch_size*num_images, backone['output_dim'],
         #  backbone['output_image_size], backbone['output_image_size']]
         # Lulz, this is 32x the input shape for mnist of [36, 1, 64, 64].
+        print('X ', x.shape)
 
-        # precaps is [bs, 128, 20, 20] ... Oh because it's a 40x40
+        # config=20ccgray --> precaps is [bs, backbone.output_dim=128, backbone.out_img_size=32, out_img_size=32]
         c = self.pre_caps(x)
+        print('precaps', c.shape)
         pre_caps_res = c
 
         if self.do_capsule_computation:
             ## Primary Capsule Layer (a single CNN)
+            # config=2ccgray --> u is [bs, something=576, primary_capsules.out_img_size, primary_capsules.out_img_size]
             u = self.pc_layer(c)
-            # dmm u.shape: [64, 1024, 8, 8]
+            print('u: ', u.shape)
             u = u.permute(0, 2, 3, 1)
             u = u.view(u.shape[0], self.pc_output_dim, self.pc_output_dim,
                        self.pc_num_caps, self.pc_caps_dim) # 100, 14, 14, 32, 16
@@ -280,7 +283,29 @@ class CapsTimeModel(nn.Module):
                 # perform initilialization for the capsule values as single forward passing
                 capsule_values, _val = [init_capsule_value], init_capsule_value
                 for i in range(len(self.capsule_layers)):
+                    print('init capsule %d' % i, _val.shape)
+                    # It's the CapsuleFC that knows to do this...
+                    print(self.capsule_layers[i])
+                    # For init capsule 0, we have [16, 16, 15, 15, 36].
+                    # For init capsule 1, we have [16, 16, 13, 13, 36].
+                    # For init capsule 2, we have [16, 10, 36].
+                    # This is because capsule 0 is getting the output of u
+                    # and then capsule 1 is getting the output of the Conv capsule
+                    # and then capsule 2 is gettign the output of th FC capsule.
+                    # X is [16, 1, 64, 64], which corresponds to [24, 3, 2048]
+                    # precaps is [16, 128, 32, 32], compared to [24, 128, 1024].
+                    # u is [16, 576, 15, 15], compared to [24, 512, 511].
+                    # after permute, u is [16, 15, 15, 576] compared to [24, 511, 512]
+                    # then here it's [16, 15, 15, 16, 36] and permuted --> [16, 16, 15, 15, 36].
+                    # there it's [24, 511, 32, 16] and permuted --> [24, 32, 511, 16]
+                    # ... which still appears correct.
+
+                    # When this gets to init capsule 2, whic is an FC Presence,
+                    # it's already of size [bs, nc, ncd]. For the conv ones, it's
+                    # bigger. So .. that's a thing.
                     _val = self.capsule_layers[i].forward(_val, 0)
+                    # Yeahhhh, so post capsule 1 is [16, 10, 36]... somehow it knows?
+                    print('post capsule %d' % i, _val.shape)
                     # dmm:
                     # capsule 0 _val.shape: [64, 16, 6, 6, 64]
                     # capsule 1 _val.shape: [64, 10, 64]
