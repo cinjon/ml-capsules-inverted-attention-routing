@@ -35,13 +35,14 @@ def run(find_counter=None):
     job = {
         'name': '2020.05.27',
         'config': 'resnet_backbone_points5',
-        'criterion': 'nceprobs_selective',
+        'criterion': 'backbone_xent', # 'nceprobs_selective',
         'num_routing': 1,
         'dataset': 'shapenet5',
-        'batch_size': 24,
+        'batch_size': 72,
         'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
         'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
         'do_tsne_test_every': 2,
+        'do_tsne_test_after': 500, # NOTE: so we aren't doing it rn.
     }
     num_gpus = 1
     time = 8
