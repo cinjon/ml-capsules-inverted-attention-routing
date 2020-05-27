@@ -118,6 +118,8 @@ class ShapeNet55(torch.utils.data.Dataset):
         self.lbl_dict = {
             i: np.where(self.lbls == i)[0] for i in range(55)
         }
+        self.subset_count = 5 if 'dataset5' in path else -1
+        self.lbls_used = [8, 9, 28, 31, 41] if 'dataset5' in path else list(range(55))
 
     def __getitem__(self, index):
         sample = np.load(self.npy_paths[index])
@@ -165,6 +167,8 @@ class ShapeNet55(torch.utils.data.Dataset):
 
         # Permute so the channels are in the right dim.
         datum = torch.from_numpy(sample).permute(0, 2, 1).float()
+        if self.subset_count > 0:
+            lbl = self.lbls_used.index(lbl)
         return datum, lbl
 
     def pc_preprocess(self, pc):

@@ -30,7 +30,6 @@ class CapsulePointsModel(nn.Module):
                                                  backbone['output_dim'],
                                                  backbone['stride'])
 
-
         ## Primary Capsule Layer. In the same spirit as the image version, we
         # use a Conv here, but it has to be 1d. Maybe this should be a set
         # transformer?
@@ -157,8 +156,46 @@ class CapsulePointsModel(nn.Module):
         return pose, presence
 
 
+class BackboneModel(nn.Module):
+
+    def __init__(self, params, args):
+        super(BackboneModel, self).__init__()
+
+        self.num_routing = args.num_routing  # >3 may cause slow converging
+        self.presence_type = args.presence_type
+
+        #### Backbone is a ResNet that embeds each point.
+        backbone = params['backbone']
+        self.pre_caps = layers_1d.ResnetBackbone(backbone['input_dim'],
+                                                 backbone['output_dim'],
+                                                 backbone['stride'])
+
+        input_dim = backbone['output_dim']
+        input_dim *= int(backbone['inp_img_size']/2)
+        output_dim = 5 if args.dataset == 'shapenet5' else 55
+        self.fc_head = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        c = self.pre_caps(x)
+        c = c.view(c.shape[0], -1)
+        out = self.fc_head(c)
+        return out
+
+
 def get_xent_loss(model, points, labels):
     output = model(points, return_embedding=False)
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
+    return loss, stats
+
+
+def get_backbone_test_loss(model, images, labels, args):
+    # Images are expected to come as singular, not as [bs, num_images].
+    output = model(images)
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
     accuracy = (predictions == labels).float().mean().item()

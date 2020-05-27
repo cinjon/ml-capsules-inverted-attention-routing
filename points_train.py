@@ -37,7 +37,7 @@ hostname = socket.gethostname()
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 
-def run_tsne(model, path, epoch, args):
+def run_tsne(model, path, epoch, args, comet_exp):
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     train_loader, test_loader = get_loaders(args, rank=0, is_tsne=True)
@@ -236,6 +236,21 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
+        elif criterion == 'backbone_xent':
+            points = points[:, 0]
+            points = points.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+            loss, stats = capsule_points_model.get_backbone_test_loss(
+                net, points, labels, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
 
         loss.backward()
 
@@ -326,6 +341,21 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
+            elif criterion == 'backbone_xent':
+                points = points[:, 0]
+                points = points.cuda(device)
+                labels = labels.squeeze()
+                labels = labels.cuda(device)
+                loss, stats = capsule_points_model.get_backbone_test_loss(
+                    net, points, labels, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
             if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -369,10 +399,13 @@ def main(gpu, args, port=12355):
     num_frames = 3
 
     print('==> Building model..')
-    net = capsule_points_model.CapsulePointsModel(config['params'], args)
+    if 'backbone' in args.criterion:
+        net = capsule_points_model.BackboneModel(config['params'], args)
+    else:
+        net = capsule_points_model.CapsulePointsModel(config['params'], args)
     print(net)
 
-    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)                           
+    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = None
     if args.use_scheduler:
         # CIFAR used milestones of [150, 250] with gamma of 0.1
@@ -480,13 +513,7 @@ def main(gpu, args, port=12355):
             # NOTE: We always put center_start as true because we are using this
             # as a test on the digits. That's what hte linear separation is about.
             # (the angle doesn't matter).
-            run_tsne(
-                args.data_root, net, store_dir, epoch, use_moving_mnist=True,
-                comet_exp=comet_exp, center_start=True, #args.fix_moving_mnist_center,
-                single_angle=args.fix_moving_mnist_angle,
-                use_cuda_tsne=args.use_cuda_tsne, tsne_batch_size=args.tsne_batch_size,
-                point_size=args.image_size
-            )
+            run_tsne(net, store_dir, epoch, args, comet_exp)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
 
