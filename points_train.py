@@ -366,7 +366,7 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
 
     del points
     torch.cuda.empty_cache()
-    
+
     extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                          for k, v in averages.items()])
     log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -400,12 +400,16 @@ def main(gpu, args, port=12355):
 
     print('==> Building model..')
     if 'backbone' in args.criterion:
-        net = capsule_points_model.BackboneModel(config['params'], args)
+        # net = capsule_points_model.BackboneModel(config['params'], args)
+        net = capsule_points_model.NewBackboneModel()
     else:
         net = capsule_points_model.CapsulePointsModel(config['params'], args)
     print(net)
 
-    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    if args.optimizer == 'adam':
+        optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == 'sgd':
+        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     scheduler = None
     if args.use_scheduler:
         # CIFAR used milestones of [150, 250] with gamma of 0.1
@@ -420,7 +424,7 @@ def main(gpu, args, port=12355):
 
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
     assert(args.name is not None and args.counter is not None)
-    store_dir = os.path.join(args.results_dir, args.name, str(args.counter), today)                                 
+    store_dir = os.path.join(args.results_dir, args.name, str(args.counter), today)
     if gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
@@ -482,7 +486,7 @@ def main(gpu, args, port=12355):
         if epoch % 3 == 0 and gpu == 0:
             test_loss, test_acc = test(
                 epoch, step, net, test_loader, args, device,
-                store_dir=store_dir, comet_exp=comet_exp)                
+                store_dir=store_dir, comet_exp=comet_exp)
 
             if not args.debug and epoch >= last_saved_epoch + 4 and \
                last_test_loss > test_loss:
@@ -655,6 +659,6 @@ if __name__ == '__main__':
 
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
-        
+
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))

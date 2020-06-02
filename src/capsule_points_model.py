@@ -4,6 +4,7 @@
 #
 import os
 import random
+from collections import OrderedDict
 
 import numpy as np
 from PIL import Image
@@ -115,7 +116,7 @@ class CapsulePointsModel(nn.Module):
 
     def forward(self, x):
         # x: torch.Size([24, 3, 2048])
-        c = self.pre_caps(x)    
+        c = self.pre_caps(x)
         # precaps torch.Size([bs=24, backbone.output_dim=128, stride of 2 --> 1024])
 
         ## Primary Capsule Layer (a single CNN)
@@ -138,7 +139,7 @@ class CapsulePointsModel(nn.Module):
             # init capsule 1: [24, 32, 255, 16]
             # Note that precaps is [24,128,1024] and u is [24,512,512] and x is [24,3,2048]
             _val = self.capsule_layers[i].forward(_val, 0)
-            capsule_values.append(_val)        
+            capsule_values.append(_val)
 
         # second to t iterations
         # perform the routing between capsule layers
@@ -149,7 +150,7 @@ class CapsulePointsModel(nn.Module):
                     capsule_values[i], n, capsule_values[i + 1])
                 _capsule_values.append(_val)
             capsule_values = _capsule_values
-                
+
         ## After Capsule
         pose = capsule_values[-1]
         presence = self.get_presence(pose)
@@ -180,6 +181,67 @@ class BackboneModel(nn.Module):
         c = c.view(c.shape[0], -1)
         out = self.fc_head(c)
         return out
+
+
+class ConvLayer(nn.Module):
+    def __init__(self):
+        super(ConvLayer, self).__init__()
+        self.conv1 = nn.Conv1d(3, 64, 1)
+        self.conv2 = nn.Conv1d(64, 128, 1)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
+        return x
+
+class PrimaryPointCapsLayer(nn.Module):
+    def __init__(self, prim_vec_size=8, num_points=2048):
+        super(PrimaryPointCapsLayer, self).__init__()
+        self.prim_vec_size = prim_vec_size
+        self.num_points = num_points
+
+        self.capsules = nn.ModuleList([
+            torch.nn.Sequential(OrderedDict([
+                ('conv3', nn.Conv1d(128, 1024, 1)),
+                ('bn3', nn.BatchNorm1d(1024)),
+                ('mp1', nn.MaxPool1d(self.num_points)),
+            ]))
+            for _ in range(self.prim_vec_size)])
+
+    def forward(self, x):
+        u = [capsule(x) for capsule in self.capsules]
+        u = torch.stack(u, dim=2)
+        return self.squash(u.squeeze())
+
+    def squash(self, input_tensor):
+        squared_norm = (input_tensor ** 2).sum(-1, keepdim=True)
+        output_tensor = squared_norm * input_tensor / \
+            ((1. + squared_norm) * torch.sqrt(squared_norm))
+        if(output_tensor.dim() == 2):
+            output_tensor = torch.unsqueeze(output_tensor, 0)
+        return output_tensor
+
+class NewBackboneModel(nn.Module):
+    def __init__(self, out_channels=5, prim_vec_size=8, num_points=2048):
+        super(NewBackboneModel, self).__init__()
+        self.out_channels = out_channels
+        self.prim_vec_size = prim_vec_size
+        self.num_points = num_points
+
+        self.conv_layer = ConvLayer()
+        self.primary_point_caps_layer = PrimaryPointCapsLayer(
+            self.prim_vec_size, self.num_points)
+        self.fc_head = nn.Linear(
+            self.prim_vec_size * 1024, self.out_channels)
+
+    def forward(self, x):
+        x = self.conv_layer(x)
+        x = self.primary_point_caps_layer(x)
+        x = self.fc_head(x.view(x.size(0), -1))
+        return x
 
 
 def get_xent_loss(model, points, labels):
@@ -306,7 +368,7 @@ def get_nceprobs_selective_loss(model, points, device, epoch, args,
     std_per_capsule = [value.item() for value in presence.std(0)]
     l2_probs_12 = torch.norm(
         presence_point[:, 0] - presence_point[:, 1], dim=1).mean()
-    
+
     for num, item in enumerate(mean_per_capsule):
         stats['capsule_prob_mean_%d' % num] = item
     for num, item in enumerate(std_per_capsule):
