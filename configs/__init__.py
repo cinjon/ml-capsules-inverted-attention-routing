@@ -22,3 +22,4 @@ from . import resnet_backbone_gymnastics_small
 from . import resnet_backbone_gymnastics_1cc
 
 from . import resnet_backbone_points5
+from . import pointcapsnet_backbone_points5

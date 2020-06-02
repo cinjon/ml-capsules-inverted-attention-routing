@@ -172,7 +172,8 @@ class BackboneModel(nn.Module):
                                                  backbone['stride'])
 
         input_dim = backbone['output_dim']
-        input_dim *= int(backbone['inp_img_size']/2)
+        # input_dim *= int(backbone['inp_img_size']/2)
+        input_dim *= backbone['inp_img_size']
         output_dim = 5 if args.dataset == 'shapenet5' else 55
         self.fc_head = nn.Linear(input_dim, output_dim)
 
@@ -225,11 +226,12 @@ class PrimaryPointCapsLayer(nn.Module):
         return output_tensor
 
 class NewBackboneModel(nn.Module):
-    def __init__(self, out_channels=5, prim_vec_size=8, num_points=2048):
+    def __init__(self, params, args):
         super(NewBackboneModel, self).__init__()
-        self.out_channels = out_channels
-        self.prim_vec_size = prim_vec_size
-        self.num_points = num_points
+        backbone = params['backbone']
+        self.out_channels = backbone['out_channels']
+        self.prim_vec_size = backbone['prim_vec_size']
+        self.num_points = backbone['num_points']
 
         self.conv_layer = ConvLayer()
         self.primary_point_caps_layer = PrimaryPointCapsLayer(

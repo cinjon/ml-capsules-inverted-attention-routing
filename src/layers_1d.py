@@ -21,16 +21,16 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv1d(in_planes,
                                planes,
-                               kernel_size=3,
+                               kernel_size=1, # 3,
                                stride=stride,
-                               padding=1,
+                               # padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm1d(planes)
         self.conv2 = nn.Conv1d(planes,
                                planes,
-                               kernel_size=3,
+                               kernel_size=1, # 3,
                                stride=1,
-                               padding=1,
+                               # padding=1,
                                bias=False)
         self.bn2 = nn.BatchNorm1d(planes)
 
@@ -69,9 +69,9 @@ class ResnetBackbone(nn.Module):
         self.backbone = nn.Sequential(
             nn.Conv1d(in_channels=cl_input_channels,
                       out_channels=64,
-                      kernel_size=3,
+                      kernel_size=1, # 3,
                       stride=1,
-                      padding=1,
+                      # padding=1,
                       bias=False),
             nn.BatchNorm1d(64),
             nn.ReLU(),
@@ -232,7 +232,7 @@ class CapsuleConv(nn.Module):
                 next_capsule_value.shape[0], next_capsule_value.shape[1],
                 next_capsule_value.shape[2], next_capsule_value.shape[3],
                 self.sqrt_d, self.sqrt_d
-            )                
+            )
             _query_key = torch.einsum('bnkwax, knxdm, bmwad->bnkmw',
                                       _inputs, w, next_capsule_value)
             _query_key.mul_(self.scale)

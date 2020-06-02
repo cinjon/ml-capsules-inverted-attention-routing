@@ -6,7 +6,7 @@ config = {
             "kernel_size": 3,
             "output_dim": 128,
             "input_dim": 3,
-            "stride": 2,
+            "stride": 1, # 2,
             "padding": 1,
             "out_img_size": 1024, # This should govern it, not be receptive.
             "inp_img_size": 2048
@@ -25,7 +25,7 @@ config = {
             "num_caps": 32,
             "caps_dim": 36,
             "kernel_size": 3,
-            "stride": 2, 
+            "stride": 2,
             "out_img_size": 255
         }, {
             "type": "FC",

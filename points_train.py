@@ -400,8 +400,10 @@ def main(gpu, args, port=12355):
 
     print('==> Building model..')
     if 'backbone' in args.criterion:
-        # net = capsule_points_model.BackboneModel(config['params'], args)
-        net = capsule_points_model.NewBackboneModel()
+        if 'pointcapsnet' in args.config:
+            net = capsule_points_model.NewBackboneModel(config['params'], args)
+        elif 'resnet' in args.config:
+            net = capsule_points_model.BackboneModel(config['params'], args)
     else:
         net = capsule_points_model.CapsulePointsModel(config['params'], args)
     print(net)
