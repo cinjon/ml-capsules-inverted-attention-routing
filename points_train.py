@@ -39,6 +39,7 @@ is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 def run_tsne(model, path, epoch, args, comet_exp):
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
+    from sklearn.manifold import TSNE
 
     train_loader, test_loader = get_loaders(args, rank=0, is_tsne=True)
     suffix = args.dataset
@@ -72,7 +73,7 @@ def run_tsne(model, path, epoch, args, comet_exp):
                 presences = presences.cpu()
                 points = points.cpu()
                 model_poses.append(poses.view(batch_size, -1))
-                model_presences.append(presences.view(batch_size, -1))
+                model_presence.append(presences.view(batch_size, -1))
                 orig_points.append(points.view(batch_size, -1))
                 targets.append(labels)
 
@@ -89,13 +90,16 @@ def run_tsne(model, path, epoch, args, comet_exp):
                     [orig_points, model_poses, model_presence],
                     ['points', 'poses', 'presence']
             ):
-                embeddings = multiTSNE(
+                # embeddings = multiTSNE(
+                #     n_components=2, perplexity=30, learning_rate=100.0
+                # ).fit_transform(x)
+                embeddings = TSNE(
                     n_components=2, perplexity=30, learning_rate=100.0
                 ).fit_transform(x)
 
                 vis_x = embeddings[:, 0]
                 vis_y = embeddings[:, 1]
-                plt.scatter(vis_x, vis_y, c=newtargets,
+                plt.scatter(vis_x, vis_y, c=targets,
                             cmap=plt.cm.get_cmap("jet", 10), marker='.')
                 plt.colorbar(ticks=range(10))
                 plt.clim(-0.5, 9.5)
@@ -142,8 +146,14 @@ def get_loaders(args, rank=0, is_tsne=False):
     if 'shapenet' in args.dataset:
         stepsize_range = [float(k) for k in args.shapenet_stepsize_range.split(',')]
         stepsize_fixed = args.shapenet_stepsize_fixed
-        rotation_train = [float(k) for k in args.shapenet_rotation_train.split(',')]
-        rotation_test = [float(k) for k in args.shapenet_rotation_test.split(',')]
+        if args.shapenet_rotation_train:
+            rotation_train = [float(k) for k in args.shapenet_rotation_train.split(',')]
+        else:
+            rotation_train = None
+        if args.shapenet_rotation_test:
+            rotation_test = [float(k) for k in args.shapenet_rotation_test.split(',')]
+        else:
+            rotation_test = None
         rotation_same = args.shapenet_rotation_same
         root = os.path.join(args.data_root, args.dataset.replace('shapenet', 'dataset'))
         train_set = ShapeNet55(
@@ -161,7 +171,8 @@ def get_loaders(args, rank=0, is_tsne=False):
         train_loader = torch.utils.data.DataLoader(dataset=train_set,
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
-                                                   num_workers=args.num_workers)
+                                                   num_workers=args.num_workers,
+                                                   drop_last=True)
     else:
         print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -182,7 +193,8 @@ def get_loaders(args, rank=0, is_tsne=False):
     test_loader = torch.utils.data.DataLoader(dataset=test_set,
                                               batch_size=args.batch_size,
                                               shuffle=False,
-                                              num_workers=args.num_workers)
+                                              num_workers=args.num_workers,
+                                              drop_last=True)
     print('Returning data loaders...')
     return train_loader, test_loader
 
@@ -225,6 +237,18 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
                 averages['accuracy'].item()
             )
         elif criterion == 'nceprobs_selective':
+            points = points.cuda(device)
+            loss, stats = capsule_points_model.get_nceprobs_selective_loss(
+                net, points, device, epoch, args)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+        elif criterion == 'backbone_nceprobs_selective':
             points = points.cuda(device)
             loss, stats = capsule_points_model.get_nceprobs_selective_loss(
                 net, points, device, epoch, args)
@@ -330,6 +354,18 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                     averages['accuracy'].item()
                 )
             elif criterion == 'nceprobs_selective':
+                points = points.cuda(device)
+                loss, stats = capsule_points_model.get_nceprobs_selective_loss(
+                    net, points, device, epoch, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
+            elif criterion == 'backbone_nceprobs_selective':
                 points = points.cuda(device)
                 loss, stats = capsule_points_model.get_nceprobs_selective_loss(
                     net, points, device, epoch, args)

@@ -179,9 +179,20 @@ class BackboneModel(nn.Module):
 
     def forward(self, x):
         c = self.pre_caps(x)
-        c = c.view(c.shape[0], -1)
-        out = self.fc_head(c)
-        return out
+
+        if self.is_classifier:
+            c = c.view(c.shape[0], -1)
+            out = self.fc_head(c)
+            return out
+        else:
+            presence = self.get_presence(c)
+            return c, presence
+
+    def get_presence(self, final_pose):
+        if not self.presence_type:
+            return None
+        elif self.presence_type == 'l2norm':
+            return final_pose.norm(dim=2)
 
 
 class ConvLayer(nn.Module):
@@ -199,15 +210,16 @@ class ConvLayer(nn.Module):
         return x
 
 class PrimaryPointCapsLayer(nn.Module):
-    def __init__(self, prim_vec_size=8, num_points=2048):
+    def __init__(self, prim_cap_size=1024, prim_vec_size=8, num_points=2048):
         super(PrimaryPointCapsLayer, self).__init__()
+        self.prim_cap_size = prim_cap_size
         self.prim_vec_size = prim_vec_size
         self.num_points = num_points
 
         self.capsules = nn.ModuleList([
             torch.nn.Sequential(OrderedDict([
-                ('conv3', nn.Conv1d(128, 1024, 1)),
-                ('bn3', nn.BatchNorm1d(1024)),
+                ('conv3', nn.Conv1d(128, self.prim_cap_size, 1)),
+                ('bn3', nn.BatchNorm1d(self.prim_cap_size)),
                 ('mp1', nn.MaxPool1d(self.num_points)),
             ]))
             for _ in range(self.prim_vec_size)])
@@ -229,21 +241,38 @@ class NewBackboneModel(nn.Module):
     def __init__(self, params, args):
         super(NewBackboneModel, self).__init__()
         backbone = params['backbone']
-        self.out_channels = backbone['out_channels']
+        self.prim_cap_size = backbone['prim_cap_size']
         self.prim_vec_size = backbone['prim_vec_size']
         self.num_points = backbone['num_points']
 
+        self.out_channels = 5 if args.dataset == 'shapenet5' else 55
+
+        self.presence_type = args.presence_type
+        self.is_classifier = 'xent' in args.criterion
+
         self.conv_layer = ConvLayer()
         self.primary_point_caps_layer = PrimaryPointCapsLayer(
-            self.prim_vec_size, self.num_points)
-        self.fc_head = nn.Linear(
-            self.prim_vec_size * 1024, self.out_channels)
+            self.prim_cap_size, self.prim_vec_size, self.num_points)
+
+        if self.is_classifier:
+            self.fc_head = nn.Linear(
+                self.prim_cap_size * self.prim_vec_size, self.out_channels)
 
     def forward(self, x):
         x = self.conv_layer(x)
         x = self.primary_point_caps_layer(x)
-        x = self.fc_head(x.view(x.size(0), -1))
-        return x
+        if self.is_classifier:
+            x = self.fc_head(x.view(x.size(0), -1))
+            return x
+        else:
+            presence = self.get_presence(x)
+            return x, presence
+
+    def get_presence(self, final_pose):
+        if not self.presence_type:
+            return None
+        elif self.presence_type == 'l2norm':
+            return final_pose.norm(dim=2)
 
 
 def get_xent_loss(model, points, labels):
