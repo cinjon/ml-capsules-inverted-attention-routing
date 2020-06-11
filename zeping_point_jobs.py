@@ -305,6 +305,91 @@ def run(find_counter=None):
 
         return find_counter, job
 
+    # 21-22: pointcapsnet backbone nce on dataset16
+    # vars: nce_presence_temperature
+    if find_counter in [21, 22]:
+        num_gpus = 1
+        time = 8
+        job.update({
+            'name': '2020.06.10',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'backbone_nceprobs_selective',
+            'num_routing': 1,
+            'dataset': 'shapenet16',
+            'batch_size': 16,
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            # 'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 2,
+            'do_tsne_test_after': -1,
+            'lr': 3e-4,
+            'optimizer': 'adam',
+            'presence_type': 'l2norm',
+            'simclr_selection_strategy': 'anchor0_other12',
+            'nce_presence_lambda': 1.0,
+            # '--shapenet_stepsize_range': '0,0',
+            # '--shapenet_rotation_train': '',
+            # '--shapenet_rotation_test': '',
+            # 'use_diff_object': True,
+            'epoch': 350,
+            'weight_decay': 0,
+        })
+
+        if find_counter == 21:
+            job.update({
+                'nce_presence_temperature': 0.1
+            })
+        if find_counter == 22:
+            job.update({
+                'nce_presence_temperature': 0.01
+            })
+
+        return find_counter, job
+
+    # 23-24: pointcapsnet backbone nce on dataset16 with different object,
+    # same origin and no rotation
+    # vars: nce_presence_temperature
+    if find_counter in [23, 24]:
+        num_gpus = 1
+        time = 8
+        job.update({
+            'name': '2020.06.10',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'backbone_nceprobs_selective',
+            'num_routing': 1,
+            'dataset': 'shapenet16',
+            'batch_size': 16,
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            # 'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 2,
+            'do_tsne_test_after': -1, # 500,
+            'lr': 3e-4,
+            'optimizer': 'adam',
+            'presence_type': 'l2norm',
+            'simclr_selection_strategy': 'anchor0_other12',
+            'nce_presence_lambda': 1.0,
+            '--shapenet_stepsize_range': '0,0',
+            '--shapenet_rotation_train': '',
+            '--shapenet_rotation_test': '',
+            'use_diff_object': True,
+            'epoch': 350,
+            'weight_decay': 0,
+        })
+
+        if find_counter == 23:
+            job.update({
+                'nce_presence_temperature': 0.1
+            })
+        if find_counter == 24:
+            job.update({
+                'nce_presence_temperature': 0.01
+            })
+
+        return find_counter, job
+
     else:
         print('Counter not found')
         return None, None

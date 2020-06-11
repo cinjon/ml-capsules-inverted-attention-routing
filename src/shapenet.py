@@ -77,7 +77,7 @@ def pc_normalize(pc):
 class ShapeNet55(torch.utils.data.Dataset):
     """
     NOTE: The Geometric Capsuels paper does a random rotation and translation
-    to the viewpoints. 
+    to the viewpoints.
     - Random rotation for the multi-view appointments: [-pi/4, pi/4]
     - Actual input points are translated by random vector in [-1, 1]^3 and
       rotated about a random axis and random angle in -180, 180.
@@ -85,7 +85,7 @@ class ShapeNet55(torch.utils.data.Dataset):
 
     We are doing the translation along stepsize * [1, 1, 1]. When stepsize is
     random in (-1, 1), this is still not a random translation in [-1, 1]^3. To
-    get that, we'd need to pick it randomly for *each* direction.    
+    get that, we'd need to pick it randomly for *each* direction.
     """
     def __init__(self, path, split='train', npoints=2048, num_frames=3,
                  use_diff_object=True, stepsize_range=None, stepsize_fixed=None,
@@ -118,8 +118,15 @@ class ShapeNet55(torch.utils.data.Dataset):
         self.lbl_dict = {
             i: np.where(self.lbls == i)[0] for i in range(55)
         }
-        self.subset_count = 5 if 'dataset5' in path else -1
-        self.lbls_used = [8, 9, 28, 31, 41] if 'dataset5' in path else list(range(55))
+        if 'dataset5' in path:
+            self.subset_count = 5
+            self.lbls_used = [8, 9, 28, 31, 41]
+        elif 'dataset16' in path:
+            self.subset_count = 16
+            self.lbls_used = [1, 5, 10, 25, 27, 29, 35, 36, 37, 38, 40, 42, 46, 48, 52, 54]
+        else:
+            self.subset_count = -1
+            self.lbls_used = list(range(55))
 
     def __getitem__(self, index):
         sample = np.load(self.npy_paths[index])

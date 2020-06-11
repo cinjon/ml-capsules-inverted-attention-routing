@@ -39,20 +39,18 @@ is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 def run_tsne(model, path, epoch, args, comet_exp):
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
-    from sklearn.manifold import TSNE
 
     train_loader, test_loader = get_loaders(args, rank=0, is_tsne=True)
     suffix = args.dataset
 
-    orig_points = []
     model_poses = []
     model_presence = []
     targets = []
 
     with torch.no_grad():
         for loader, split in zip([train_loader, test_loader], ['train', 'test']):
-            if split == 'train':
-                continue
+            # if split == 'train':
+            #     continue
 
             for batch_num, (points, labels) in enumerate(loader):
                 if batch_num % 10 == 0:
@@ -74,11 +72,8 @@ def run_tsne(model, path, epoch, args, comet_exp):
                 points = points.cpu()
                 model_poses.append(poses.view(batch_size, -1))
                 model_presence.append(presences.view(batch_size, -1))
-                orig_points.append(points.view(batch_size, -1))
                 targets.append(labels)
 
-            orig_points = torch.cat(orig_points, 0)
-            orig_points = orig_points.numpy()
             model_poses = torch.cat(model_poses, 0)
             model_poses = model_poses.numpy()
             model_presence = torch.cat(model_presence, 0)
@@ -87,13 +82,10 @@ def run_tsne(model, path, epoch, args, comet_exp):
             targets = targets.numpy().squeeze()
 
             for x, key in zip(
-                    [orig_points, model_poses, model_presence],
-                    ['points', 'poses', 'presence']
+                    [model_poses, model_presence],
+                    ['poses', 'presence']
             ):
-                # embeddings = multiTSNE(
-                #     n_components=2, perplexity=30, learning_rate=100.0
-                # ).fit_transform(x)
-                embeddings = TSNE(
+                embeddings = multiTSNE(
                     n_components=2, perplexity=30, learning_rate=100.0
                 ).fit_transform(x)
 
@@ -118,7 +110,6 @@ def run_tsne(model, path, epoch, args, comet_exp):
 
             model_poses = []
             model_presence = []
-            orig_points = []
             targets = []
 
 
@@ -597,7 +588,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset',
                         default='shapenet5',
                         type=str,
-                        help='dataset: either shapenet5 or shapenetFull.')
+                        help='dataset: either shapenet5, shapenet16 or shapenetFull.')
     parser.add_argument('--num_frames', default=2, type=int,
                         help='how many frames to include in the input.')
     parser.add_argument('--use_diff_object',
