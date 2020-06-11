@@ -400,10 +400,10 @@ def get_nceprobs_selective_loss(model, points, device, epoch, args,
     l2_probs_12 = torch.norm(
         presence_point[:, 0] - presence_point[:, 1], dim=1).mean()
 
-    for num, item in enumerate(mean_per_capsule):
-        stats['capsule_prob_mean_%d' % num] = item
-    for num, item in enumerate(std_per_capsule):
-        stats['capsule_prob_std_%d' % num] = item
+    # for num, item in enumerate(mean_per_capsule):
+    #     stats['capsule_prob_mean_%d' % num] = item
+    # for num, item in enumerate(std_per_capsule):
+    #     stats['capsule_prob_std_%d' % num] = item
 
     stats.update({
         'mean_max_l2norm': max_values.mean().item(),
