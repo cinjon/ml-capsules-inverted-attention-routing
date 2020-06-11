@@ -94,7 +94,7 @@ def run_tsne(model, path, epoch, args, comet_exp, num_classes):
                 plt.scatter(vis_x, vis_y, c=targets,
                             cmap=plt.cm.get_cmap("jet", num_classes), marker='.')
                 plt.colorbar(ticks=range(num_classes))
-                plt.clim(-0.5, 9.5)
+                plt.clim(-0.5, float(num_classes) + 0.5)
                 path_ = os.path.join(path, 'tsne.%s.%s.%s%03d.png' % (
                     suffix, key, split, epoch))
                 plt.savefig(path_)
@@ -420,7 +420,7 @@ def main(gpu, args, port=12355):
     torch.manual_seed(args.seed)
 
     config = getattr(configs, args.config).config
-    num_classes = int(args.dataset.split('shapenet')[1])
+    num_classes = args.num_output_classes
     print('Num Classes: %d' % num_classes)
     print(config)
 

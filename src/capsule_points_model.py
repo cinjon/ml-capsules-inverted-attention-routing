@@ -304,7 +304,6 @@ def do_simclr_nce(temperature, probs=None, anchor=None, other=None,
     """NOTE: This normalization that happens here should not be applied
     across capsules, only across probs or an individiaul capsule.
     """
-    print('Hi Simcl: ', probs.shape)
     if selection_strategy == 'default':
         selection = [0, 1]
     elif selection_strategy == 'randomize_selection':
