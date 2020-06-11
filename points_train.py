@@ -485,7 +485,7 @@ def main(gpu, args, port=12355):
     comet_exp = None
     if args.use_comet and gpu == 0:
         comet_exp = CometExperiment(api_key="hIXq6lDzWzz24zgKv7RYz6blo",
-                                    project_name="capsules",
+                                    project_name="capsules-shapenet-filtered",
                                     workspace="cinjon",
                                     auto_metric_logging=True,
                                     auto_output_logging=None,
