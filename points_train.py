@@ -37,7 +37,7 @@ hostname = socket.gethostname()
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
 
 
-def run_tsne(model, path, epoch, args, comet_exp):
+def run_tsne(model, path, epoch, args, comet_exp, num_classes):
     from MulticoreTSNE import MulticoreTSNE as multiTSNE
 
     train_loader, test_loader = get_loaders(args, rank=0, is_tsne=True)
@@ -92,8 +92,8 @@ def run_tsne(model, path, epoch, args, comet_exp):
                 vis_x = embeddings[:, 0]
                 vis_y = embeddings[:, 1]
                 plt.scatter(vis_x, vis_y, c=targets,
-                            cmap=plt.cm.get_cmap("jet", 10), marker='.')
-                plt.colorbar(ticks=range(10))
+                            cmap=plt.cm.get_cmap("jet", num_classes), marker='.')
+                plt.colorbar(ticks=range(num_classes))
                 plt.clim(-0.5, 9.5)
                 path_ = os.path.join(path, 'tsne.%s.%s.%s%03d.png' % (
                     suffix, key, split, epoch))
@@ -420,6 +420,8 @@ def main(gpu, args, port=12355):
     torch.manual_seed(args.seed)
 
     config = getattr(configs, args.config).config
+    num_classes = int(args.dataset.split('shapenet')[1])
+    print('Num Classes: %d' % num_classes)
     print(config)
 
     train_loader, test_loader = get_loaders(args, rank=gpu)
@@ -546,7 +548,7 @@ def main(gpu, args, port=12355):
             # NOTE: We always put center_start as true because we are using this
             # as a test on the digits. That's what hte linear separation is about.
             # (the angle doesn't matter).
-            run_tsne(net, store_dir, epoch, args, comet_exp)
+            run_tsne(net, store_dir, epoch, args, comet_exp, num_classes)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
 
 
@@ -675,7 +677,7 @@ if __name__ == '__main__':
         jobid = int(os.getenv('SLURM_ARRAY_TASK_ID'))
         user = getpass.getuser()
         user = 'cinjon' if user in ['cr2668', 'resnick'] else 'zeping'
-        if jobid in [2, 5] or user == 'zeping':
+        if user == 'zeping':
             counter, job = zeping_jobs.run(find_counter=jobid)
         elif user == 'cinjon':
             counter, job = cinjon_jobs.run(find_counter=jobid)

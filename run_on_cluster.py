@@ -19,16 +19,14 @@ is_cims = any([
     hostname.startswith('weaver')
 ])
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
+print('\n***\nHOstname: ', hostname, '\n***\n')
 
 def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
                 time, find_counter, do_job=False):
     # TODO: Are these numbers optimal?
     num_cpus = num_gpus * 4
     gb = num_gpus * 16
-    if is_cims:
-        directory = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps'
-        write_func = write_cims
-    elif is_prince:
+    if is_prince:
         directory = '/beegfs/cr2668/vidcaps'
         write_func = write_prince
         job['data_root'] = os.path.join(directory, 'MovingMNist')
@@ -39,7 +37,8 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
         job['data_root'] = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/MNIST'
         job['affnist_data_root'] = '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/data/affNIST'
     else:
-        raise
+        directory = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps'
+        write_func = write_cims
 
     slurm_logs = os.path.join(directory, 'slurm_logs')
     slurm_scripts = os.path.join(directory, 'slurm_scripts')
@@ -74,7 +73,10 @@ def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
         return counter, None
 
     jobname = 'somotion.%dhr.cnt%d-%d' % (time, original_counter, counter)
-    jobcommand = "python train.py --mode jobarray"
+    if 'shapenet' in job['dataset']:
+        jobcommand = "python points_train.py --mode jobarray"
+    else:
+        jobcommand = "python train.py --mode jobarray"
     print("Size: ", len(jobarray), jobcommand, " /.../ ", jobname)
 
     slurmfile = os.path.join(slurm_scripts, jobname + '.slurm')
