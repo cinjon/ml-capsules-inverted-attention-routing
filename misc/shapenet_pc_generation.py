@@ -186,6 +186,7 @@ bad_list = [
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_root', type=str, default='ShapeNetCore.v2')
 parser.add_argument('--store_dir', type=str, default='./data')
+args = parser.parse_args()
 
 if __name__ == '__main__':
     os.makedirs(args.store_dir, exist_ok=True)
