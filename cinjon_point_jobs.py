@@ -176,7 +176,7 @@ def run(find_counter=None):
     var_arrays = {'lr': [1e-3, 3e-4]}
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -209,6 +209,106 @@ def run(find_counter=None):
     num_gpus = 2
     time = 5
     var_arrays = {'lr': [3e-4, 1e-3], 'nce_presence_temperature': [0.1, 0.01]}                  
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 20 ... has 5523112 params.
+    # Do the full config, not just the backbone. Not using ModelNet here. Doing
+    # fixed center and no rotation.
+    job = {
+        'name': '2020.06.14',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': ''
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-3], 'nce_presence_temperature': [0.3, 0.1, 0.03]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 23 (2256208). We updated the backbone to have stride=2. Ensure
+    # this still works to a reasonable extent for XEnt.
+    job = {
+        'name': '2020.06.14',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'backbone_xent', # nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 36,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'weight_decay': 0,
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': 500,
+        'epoch': 350,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'lr': 1e-3
+    }
+    num_gpus = 1
+    time = 5
+    var_arrays = {'lr': [1e-3, 3e-4]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 25 ... on Dgx so w more batch size.
+    job = {
+        'name': '2020.06.14',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': ''
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-3], 'nce_presence_temperature': [0.3, 0.1, 0.03]}
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)

@@ -19,7 +19,7 @@ is_cims = any([
     hostname.startswith('weaver')
 ])
 is_prince = hostname.startswith('log-') or hostname.startswith('gpu-')
-print('\n***\nHOstname: ', hostname, '\n***\n')
+# print('\n***\nHOstname: ', hostname, '\n***\n')
 
 def do_jobarray(email, code_directory, num_gpus, counter, job, var_arrays,
                 time, find_counter, do_job=False):
