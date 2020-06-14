@@ -171,11 +171,13 @@ class BackboneModel(nn.Module):
                                                  backbone['output_dim'],
                                                  backbone['stride'])
 
-        input_dim = backbone['output_dim']
-        # input_dim *= int(backbone['inp_img_size']/2)
-        input_dim *= backbone['inp_img_size']
-        output_dim = 5 if args.dataset == 'shapenet5' else 55
-        self.fc_head = nn.Linear(input_dim, output_dim)
+        self.is_classifier = 'xent' in args.criterion
+        if self.is_classifier:
+            input_dim = backbone['output_dim']
+            # input_dim *= int(backbone['inp_img_size']/2)
+            input_dim *= backbone['inp_img_size']
+            output_dim = args.num_output_classes
+            self.fc_head = nn.Linear(input_dim, output_dim)
 
     def forward(self, x):
         c = self.pre_caps(x)
@@ -245,7 +247,7 @@ class NewBackboneModel(nn.Module):
         self.prim_vec_size = backbone['prim_vec_size']
         self.num_points = backbone['num_points']
 
-        self.out_channels = 5 if args.dataset == 'shapenet5' else 55
+        self.out_channels = args.num_output_classes
 
         self.presence_type = args.presence_type
         self.is_classifier = 'xent' in args.criterion
