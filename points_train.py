@@ -112,6 +112,13 @@ def run_tsne(model, path, epoch, args, comet_exp, num_classes):
             model_presence = []
             targets = []
 
+    del model_presence
+    del model_poses
+    del targets
+    del points
+    del presences
+    del poses
+
 
 class Averager():
     def __init__(self):
@@ -532,9 +539,6 @@ def main(gpu, args, port=12355):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-            print('test_acc: ', test_acc, test_loss)
-            print('trainacc: ', train_acc, train_loss)
-
         if comet_exp:
             comet_exp.log_epoch_end(epoch)
 
@@ -550,6 +554,8 @@ def main(gpu, args, port=12355):
             # (the angle doesn't matter).
             run_tsne(net, store_dir, epoch, args, comet_exp, num_classes)
             print('\n***\nEnded TSNE (%d)\n***' % epoch)
+            torch.cuda.empty_cache()
+            print('\n***\nCleared Cache (%d)\n***' % epoch)
 
 
 if __name__ == '__main__':
