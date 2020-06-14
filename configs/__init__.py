@@ -21,6 +21,7 @@ from . import resnet_backbone_gymnastics
 from . import resnet_backbone_gymnastics_small
 from . import resnet_backbone_gymnastics_1cc
 
-from . import resnet_backbone_points5
 from . import pointcapsnet_backbone_points5_cap16
 from . import pointcapsnet_backbone_points5_cap8
+from . import resnet_backbone_points5
+from . import resnet_backbone_points16 # 86144608 params
