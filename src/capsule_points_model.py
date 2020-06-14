@@ -124,6 +124,7 @@ class CapsulePointsModel(nn.Module):
         u = self.pc_layer(c)
 
         u = u.permute(0, 2, 1)
+        # torch.Size([32, 1024, 1152]) 512 32 36
         u = u.view(u.shape[0], self.pc_output_dim, self.pc_num_caps, self.pc_caps_dim)
         u = u.permute(0, 2, 1, 3)  # 100, 32, 14, 14, 16
         init_capsule_value = self.layer_norm(u)  #capsule_utils.squash(u)
@@ -176,6 +177,8 @@ class BackboneModel(nn.Module):
             input_dim = backbone['output_dim']
             # input_dim *= int(backbone['inp_img_size']/2)
             input_dim *= backbone['inp_img_size']
+            input_dim /= backbone['stride']
+            input_dim = int(input_dim)
             output_dim = args.num_output_classes
             self.fc_head = nn.Linear(input_dim, output_dim)
 
