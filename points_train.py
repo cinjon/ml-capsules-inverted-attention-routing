@@ -724,7 +724,7 @@ def main(gpu, args, port=12355):
             epoch > args.do_modelnet_test_after
         ]):
             print('\n***\nStarting ModelNet Test (%d)\n***' % epoch)
-            run_modelnet_test(args, net, device, comet_exp=comet_exp)
+            run_modelnet_test(args, net, device, epoch, comet_exp=comet_exp)
 
 
 if __name__ == '__main__':
