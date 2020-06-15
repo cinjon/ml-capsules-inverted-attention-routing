@@ -622,8 +622,12 @@ def main(gpu, args, port=12355):
     print('Total Params %d' % total_params)
 
     today = datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-    assert(args.name is not None and args.counter is not None)
-    store_dir = os.path.join(args.results_dir, args.name, str(args.counter), today)
+    if args.linpred_test_only:
+        store_dir = None
+    else:
+        assert(args.name is not None and args.counter is not None)
+        store_dir = os.path.join(args.results_dir, args.name, str(args.counter), today)
+
     if gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
@@ -674,6 +678,20 @@ def main(gpu, args, port=12355):
     last_saved_epoch = 0
     device = gpu
 
+    if args.linpred_test_only:
+        print('\n***\nStarting LinPred Test (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_model(
+            start_epoch, net, args.data_root, args.affnist_root, comet_exp,
+            args.mnist_batch_size, args.colored, args.num_workers,
+            config['params'], args.backbone, args.num_routing, num_frames,
+            args.use_presence_probs, args.presence_temperature,
+            args.presence_loss_type, do_capsule_computation, args.mnist_lr,
+            args.mnist_weight_decay, args.affnist_subset, args.step_length,
+            args.mnist_classifier_strategy, args.affnist_dataset_loader,
+            args.resume_dir, args.image_size)
+        print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
+        return
+
     for epoch in range(start_epoch, start_epoch + total_epochs):
         print('Starting Epoch %d' % epoch)
         train_loss, train_acc, step = train(epoch, step, net, optimizer,
@@ -695,9 +713,21 @@ def main(gpu, args, port=12355):
                     'step': step,
                     'loss': test_loss
                 }
+                print('\n***\nSaving best epoch %d\n***\n' % epoch)
+                torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.best.pth' % epoch))
+                last_test_loss = test_loss
+                last_saved_epoch = epoch
+
+            if not args.debug and epoch >= last_saved_epoch + 15 and \
+               args.epoch >= 100 and args.criterion == 'nceprobs_selective':
+                state = {
+                    'net': net.state_dict(),
+                    'epoch': epoch,
+                    'step': step,
+                    'loss': test_loss
+                }
                 print('\n***\nSaving epoch %d\n***\n' % epoch)
                 torch.save(state, os.path.join(store_dir, 'ckpt.epoch%d.pth' % epoch))
-                last_test_loss = test_loss
                 last_saved_epoch = epoch
 
         if comet_exp:
@@ -882,6 +912,13 @@ if __name__ == '__main__':
 
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
+
+    if args.counter == 34 and args.linpred_test_only:
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.15/34/2020-06-15-05-54-27/ckpt.epoch150.pth')
+        args.resume_epoch = 150
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
