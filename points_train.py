@@ -152,7 +152,7 @@ class LinearClassifier(nn.Module):
     def forward(self, x):
         return self.fc_head(x.view(x.size(0), -1))
 
-def run_modelnet_test(args, net, device, comet_exp=None):
+def run_modelnet_test(args, net, device, current_epoch, comet_exp=None):
     net.eval()
 
     # TODO: this is hard coded. Need to find a way to handle both
@@ -298,7 +298,7 @@ def run_modelnet_test(args, net, device, comet_exp=None):
     if comet_exp:
         with comet_exp.test():
             epoch_avgs = {k: v.item() for k, v in averages.items()}
-            comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
+            comet_exp.log_metrics(epoch_avgs, epoch=current_epoch)
 
 
 def get_loaders(args, rank=0, is_tsne=False):
@@ -853,7 +853,7 @@ if __name__ == '__main__':
                         default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/modelnet/modelnet40_ply_hdf5_2048',
                         help='path to modelnet data')
     parser.add_argument('--do_modelnet_test_every',
-                        default=None, type=int,
+                        default=500, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'every this many epochs.')
     parser.add_argument('--do_modelnet_test_after',
