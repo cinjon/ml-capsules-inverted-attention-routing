@@ -182,15 +182,18 @@ class BackboneModel(nn.Module):
             output_dim = args.num_output_classes
             self.fc_head = nn.Linear(input_dim, output_dim)
 
-    def forward(self, x):
+    def forward(self, x, return_embedding=False):
         c = self.pre_caps(x)
 
+        if return_embedding:
+            return c
+
+        presence = self.get_presence(c)
         if self.is_classifier:
             c = c.view(c.shape[0], -1)
             out = self.fc_head(c)
-            return out
+            return out, presence
         else:
-            presence = self.get_presence(c)
             return c, presence
 
     def get_presence(self, final_pose):
@@ -263,14 +266,18 @@ class NewBackboneModel(nn.Module):
             self.fc_head = nn.Linear(
                 self.prim_cap_size * self.prim_vec_size, self.out_channels)
 
-    def forward(self, x):
+    def forward(self, x, return_embedding=False):
         x = self.conv_layer(x)
         x = self.primary_point_caps_layer(x)
+
+        if return_embedding:
+            return x
+
+        presence = self.get_presence(x)
         if self.is_classifier:
             x = self.fc_head(x.view(x.size(0), -1))
-            return x
+            return x, presence
         else:
-            presence = self.get_presence(x)
             return x, presence
 
     def get_presence(self, final_pose):
@@ -293,7 +300,7 @@ def get_xent_loss(model, points, labels):
 
 def get_backbone_test_loss(model, images, labels, args):
     # Images are expected to come as singular, not as [bs, num_images].
-    output = model(images)
+    output, _ = model(images)
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
     accuracy = (predictions == labels).float().mean().item()

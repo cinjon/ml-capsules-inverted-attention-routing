@@ -200,7 +200,7 @@ def run(find_counter=None):
 
         return find_counter, job
 
-    # 13-16: pointcapsnet cap8 backbone nce with different object and same origin
+    # 13-16: pointcapsnet cap8 backbone nce with different object
     # vars: weight_decay, nce_presence_temperature
     if find_counter in [13, 14, 15, 16]:
         num_gpus = 1
@@ -222,9 +222,6 @@ def run(find_counter=None):
             'presence_type': 'l2norm',
             'simclr_selection_strategy': 'anchor0_other12',
             'nce_presence_lambda': 1.0,
-            '--shapenet_stepsize_range': '0,0',
-            '--shapenet_rotation_train': '',
-            '--shapenet_rotation_test': '',
             'use_diff_object': True,
             'epoch': 200
         })
@@ -252,8 +249,7 @@ def run(find_counter=None):
 
         return find_counter, job
 
-    # 17-20: pointcapsnet cap16 backbone nce with different object,
-    # same origin and no rotation
+    # 17-20: pointcapsnet cap16 backbone nce with different object
     # vars: weight_decay, nce_presence_temperature
     if find_counter in [17, 18, 19, 20]:
         num_gpus = 1
@@ -275,9 +271,6 @@ def run(find_counter=None):
             'presence_type': 'l2norm',
             'simclr_selection_strategy': 'anchor0_other12',
             'nce_presence_lambda': 1.0,
-            '--shapenet_stepsize_range': '0,0',
-            '--shapenet_rotation_train': '',
-            '--shapenet_rotation_test': '',
             'use_diff_object': True,
             'epoch': 200
         })
@@ -328,12 +321,9 @@ def run(find_counter=None):
             'presence_type': 'l2norm',
             'simclr_selection_strategy': 'anchor0_other12',
             'nce_presence_lambda': 1.0,
-            # '--shapenet_stepsize_range': '0,0',
-            # '--shapenet_rotation_train': '',
-            # '--shapenet_rotation_test': '',
-            # 'use_diff_object': True,
             'epoch': 350,
             'weight_decay': 0,
+            'num_output_classes': 16
         })
 
         if find_counter == 21:
@@ -347,8 +337,7 @@ def run(find_counter=None):
 
         return find_counter, job
 
-    # 23-24: pointcapsnet backbone nce on dataset16 with different object,
-    # same origin and no rotation
+    # 23-24: pointcapsnet backbone nce on dataset16 with different object
     # vars: nce_presence_temperature
     if find_counter in [23, 24]:
         num_gpus = 1
@@ -377,6 +366,7 @@ def run(find_counter=None):
             'use_diff_object': True,
             'epoch': 350,
             'weight_decay': 0,
+            'num_output_classes': 16
         })
 
         if find_counter == 23:
@@ -386,6 +376,124 @@ def run(find_counter=None):
         if find_counter == 24:
             job.update({
                 'nce_presence_temperature': 0.01
+            })
+
+        return find_counter, job
+
+    # 25-26: pointcapsnet backbone nce on dataset16 with different object,
+    # same origin and no rotation
+    # vars: nce_presence_temperature
+    if find_counter in [25, 26]:
+        num_gpus = 1
+        time = 8
+        job.update({
+            'name': '2020.06.10',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'backbone_nceprobs_selective',
+            'num_routing': 1,
+            'dataset': 'shapenet16',
+            'batch_size': 16,
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            # 'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 2,
+            'do_tsne_test_after': -1, # 500,
+            'lr': 3e-4,
+            'optimizer': 'adam',
+            'presence_type': 'l2norm',
+            'simclr_selection_strategy': 'anchor0_other12',
+            'nce_presence_lambda': 1.0,
+            'shapenet_stepsize_range': '0,0',
+            'shapenet_rotation_train': '',
+            'shapenet_rotation_test': '',
+            'use_diff_object': True,
+            'epoch': 350,
+            'weight_decay': 0,
+            'num_output_classes': 16
+        })
+
+        if find_counter == 25:
+            job.update({
+                'nce_presence_temperature': 0.1
+            })
+        if find_counter == 26:
+            job.update({
+                'nce_presence_temperature': 0.01
+            })
+
+        return find_counter, job
+
+    # 27-28: pointcapsnet backbone xent on dataset16
+    # vars: weight_decay
+    if find_counter in [27, 28]:
+        num_gpus = 1
+        time = 8
+        job.update({
+            'name': '2020.06.14',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'backbone_xent',
+            'num_routing': 1,
+            'dataset': 'shapenet16',
+            'batch_size': 16,
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 2,
+            'do_tsne_test_after': -1,
+            'lr': 3e-4,
+            'optimizer': 'adam',
+            'epoch': 350,
+            'num_output_classes': 16,
+            'do_modelnet_test_after': 30,
+            'do_modelnet_test_every': 10,
+            'modelnet_test_epoch': 30
+        })
+
+        if find_counter == 27:
+            job.update({
+                'weight_decay': 0,
+            })
+        if find_counter == 28:
+            job.update({
+                'weight_decay': 5e-4,
+            })
+
+        return find_counter, job
+
+    # 29-30: resnet backbone xent on dataset16
+    # vars: weight_decay
+    if find_counter in [29, 30]:
+        num_gpus = 1
+        time = 8
+        job.update({
+            'name': '2020.06.14',
+            'counter': find_counter,
+            'config': 'resnet_backbone_points16',
+            'criterion': 'backbone_xent',
+            'num_routing': 1,
+            'dataset': 'shapenet16',
+            'batch_size': 16,
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 2,
+            'do_tsne_test_after': -1,
+            'lr': 3e-4,
+            'optimizer': 'adam',
+            'epoch': 350,
+            'num_output_classes': 16,
+            'do_modelnet_test_after': 30,
+            'do_modelnet_test_every': 10,
+            'modelnet_test_epoch': 30
+        })
+
+        if find_counter == 29:
+            job.update({
+                'weight_decay': 0,
+            })
+        if find_counter == 30:
+            job.update({
+                'weight_decay': 5e-4,
             })
 
         return find_counter, job

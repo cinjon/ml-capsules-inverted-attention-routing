@@ -31,6 +31,7 @@ import cinjon_point_jobs as cinjon_jobs
 import zeping_point_jobs as zeping_jobs
 from src import capsule_points_model
 from src.shapenet import ShapeNet55
+from src.modelnet import ModelNet
 
 
 hostname = socket.gethostname()
@@ -139,6 +140,166 @@ def count_parameters(model):
     #         print(name, param.numel())
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+class LinearClassifier(nn.Module):
+    def __init__(self, in_channels, out_channels=40):
+        super(LinearClassifier, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.fc_head = nn.Linear(
+            self.in_channels, self.out_channels)
+
+    def forward(self, x):
+        return self.fc_head(x.view(x.size(0), -1))
+
+def run_modelnet_test(args, net, device, comet_exp=None):
+    net.eval()
+
+    # TODO: this is hard coded. Need to find a way to handle both
+    # BackboneModel and NewBackboneModel
+    if 'resnet' in args.config:
+        modelnet_net = LinearClassifier(1024 * 128)
+    else:
+        modelnet_net = LinearClassifier(1024 * 16)
+
+    modelnet_net = modelnet_net.cuda()
+
+    optimizer = optim.Adam(modelnet_net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    train_set = ModelNet(args.modelnet_root, train=True)
+    test_set = ModelNet(args.modelnet_root, train=False)
+
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_set,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        drop_last=True)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        drop_last=True)
+
+    # Train
+    for epoch in range(args.modelnet_test_epoch):
+        net.train()
+
+        averages = {
+            'loss': Averager(),
+            'grad_norm': Averager()
+        }
+
+        t = time.time()
+        criterion = args.criterion
+        optimizer.zero_grad()
+        for batch_idx, (points, labels) in enumerate(train_loader):
+            points = points[:, 0]
+            points = points.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+
+            output = net(points, return_embedding=True)
+            output = modelnet_net(output)
+            loss = F.cross_entropy(output, labels)
+            predictions = torch.argmax(output, dim=1)
+            accuracy = (predictions == labels).float().mean().item()
+            stats = {
+                'accuracy': accuracy,
+            }
+
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+
+            loss.backward()
+
+            total_norm = 0.
+            for p in net.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            averages['grad_norm'].add(total_norm ** (1. / 2))
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if batch_idx % 25 == 0 and batch_idx > 0:
+                log_text = ('Train ModelNet Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+                print(log_text.format(epoch+1, batch_idx, len(train_loader),
+                                      time.time() - t, averages['loss'].item())
+                )
+                t = time.time()
+
+        train_loss = averages['loss'].item()
+        train_acc = averages['accuracy'].item() if 'accuracy' in averages else None
+
+        t = time.time()
+
+    # Test
+    modelnet_net.eval()
+
+    averages = {
+        'modelnet_loss': Averager()
+    }
+
+    t = time.time()
+
+    with torch.no_grad():
+        for batch_idx, (points, labels) in enumerate(test_loader):
+            points = points[:, 0]
+            points = points.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+
+            output = net(points, return_embedding=True)
+            output = modelnet_net(output)
+            loss = F.cross_entropy(output, labels)
+            predictions = torch.argmax(output, dim=1)
+            accuracy = (predictions == labels).float().mean().item()
+            stats = {
+                'modelnet_accuracy': accuracy,
+            }
+
+            averages['modelnet_loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
+
+            if batch_idx % 100 == 0 and batch_idx > 0:
+                log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+                print(log_text.format(batch_idx, len(test_loader),
+                                      time.time() - t, averages['modelnet_loss'].item())
+                )
+                t = time.time()
+
+    del points
+    torch.cuda.empty_cache()
+
+    extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                         for k, v in averages.items()])
+    log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+    print(log_text.format(batch_idx, len(test_loader),
+                          time.time() - t, averages['modelnet_loss'].item()))
+    test_loss = averages['modelnet_loss'].item()
+
+    test_acc = averages['modelnet_accuracy'].item() if 'modelnet_loss' in averages else None
+
+    if comet_exp:
+        with comet_exp.test():
+            epoch_avgs = {k: v.item() for k, v in averages.items()}
+            comet_exp.log_metrics(epoch_avgs, step=step, epoch=epoch)
+
 
 def get_loaders(args, rank=0, is_tsne=False):
     if 'shapenet' in args.dataset:
@@ -166,18 +327,18 @@ def get_loaders(args, rank=0, is_tsne=False):
             rotation_range=rotation_train, rotation_same=rotation_same)
 
     if args.num_gpus == 1 or is_tsne:
-        train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers,
-                                                   drop_last=True)
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            drop_last=True)
     else:
         print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
         train_sampler = torch.utils.data.distributed.DistributedSampler(
     	    train_set,
     	    num_replicas=args.num_gpus,
-    	    rank=rank
-        )
+    	    rank=rank)
         train_loader = torch.utils.data.DataLoader(
     	    dataset=train_set,
             batch_size=args.batch_size,
@@ -185,14 +346,14 @@ def get_loaders(args, rank=0, is_tsne=False):
             num_workers=1,
             pin_memory=True,
             sampler=train_sampler,
-            drop_last=True
-        )
+            drop_last=True)
 
-    test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                              batch_size=args.batch_size,
-                                              shuffle=False,
-                                              num_workers=args.num_workers,
-                                              drop_last=True)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        drop_last=True)
     print('Returning data loaders...')
     return train_loader, test_loader
 
@@ -557,6 +718,14 @@ def main(gpu, args, port=12355):
             torch.cuda.empty_cache()
             print('\n***\nCleared Cache (%d)\n***' % epoch)
 
+        if all([
+            args.do_modelnet_test_every is not None,
+            epoch % args.do_modelnet_test_every == 0,
+            epoch > args.do_modelnet_test_after
+        ]):
+            print('\n***\nStarting ModelNet Test (%d)\n***' % epoch)
+            run_modelnet_test(args, net, device, comet_exp=comet_exp)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -677,6 +846,23 @@ if __name__ == '__main__':
                         default=55, # coudl be 5 though.
                         type=float,
                         help='the number of classes. this is a hack and dumb.')
+
+    # ModelNet
+    parser.add_argument('--modelnet_root',
+                        type=str,
+                        default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/modelnet/modelnet40_ply_hdf5_2048',
+                        help='path to modelnet data')
+    parser.add_argument('--do_modelnet_test_every',
+                        default=None, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'every this many epochs.')
+    parser.add_argument('--do_modelnet_test_after',
+                        default=500, type=int,
+                        help='if an integer > 0, then do the mnist_affnist test ' \
+                        'starting at this epoch.')
+    parser.add_argument('--modelnet_test_epoch',
+                        default=20, type=int,
+                        help='ModelNet test epoch number')
 
     args = parser.parse_args()
     if args.mode == 'jobarray':
