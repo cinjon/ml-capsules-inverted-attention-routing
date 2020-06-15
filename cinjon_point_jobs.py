@@ -246,7 +246,7 @@ def run(find_counter=None):
     var_arrays = {'lr': [1e-3], 'nce_presence_temperature': [0.3, 0.1, 0.03]}
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -312,6 +312,178 @@ def run(find_counter=None):
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 28 ... on Dgx so w more batch size. But also adding in regularization
+    job = {
+        'name': '2020.06.14',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 5e-4,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-3], 'nce_presence_temperature': [0.1, .03]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 30 ... on Dgx so w more batch size. Regularization and using scheduler 
+    job = {
+        'name': '2020.06.14',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 5e-4,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-3], 'nce_presence_temperature': [0.1]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 31. Lower LR. Also saving the model so we can run tests afterward.
+    job = {
+        'name': '2020.06.15',
+        'config': 'resnet_backbone_points16',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 5e-4,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-4, 3e-4]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 33. Smaller param config but more conv. Running on CIMS.
+    job = {
+        'name': '2020.06.15',
+        'config': 'resnet_backbone_points16_3conv1fc',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-4, 3e-4]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 35. Smaller param config but more conv. Running on CIMS.
+    job = {
+        'name': '2020.06.15',
+        'config': 'resnet_backbone_points16_4conv1fc',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {'lr': [1e-4, 3e-4]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
