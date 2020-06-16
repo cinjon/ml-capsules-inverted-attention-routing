@@ -483,6 +483,150 @@ def run(find_counter=None):
     var_arrays = {'lr': [1e-4, 3e-4]}
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 37. The above didn't work. Can we regularize training w rotation?
+    # Let's try doing htat.
+    job = {
+        'name': '2020.06.15',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-30,30',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {
+        'config': ['resnet_backbone_points16_4conv1fc', 'resnet_backbone_points16_3conv1fc']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 39. Trying -30,30 rotation w lower LR.
+    job = {
+        'name': '2020.06.15',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-30,30',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1,
+        'lr': 1e-4
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {
+        'config': ['resnet_backbone_points16_4conv1fc', 'resnet_backbone_points16_3conv1fc']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 41. Trying -90,90 rotation.
+    job = {
+        'name': '2020.06.15',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-90,90',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1,
+        'lr': 1e-4
+    }
+    num_gpus = 2
+    time = 8
+    var_arrays = {
+        'config': ['resnet_backbone_points16_4conv1fc', 'resnet_backbone_points16_3conv1fc']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 43. Backbone with smaller output_dim.
+    job = {
+        'name': '2020.06.16',
+        'criterion': 'backbone_xent', # nceprobs_selective',
+        'num_output_classes': 16,
+        'num_routing': 1,
+        'dataset': 'shapenet16',
+        'batch_size': 36,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'weight_decay': 0,
+        'do_tsne_test_every': 2,
+        'do_tsne_test_after': 500,
+        'epoch': 350,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'lr': 1e-3
+    }
+    num_gpus = 1
+    time = 5
+    var_arrays = {
+        'config': ['resnet_backbone_points16_smbone', 'resnet_backbone_points16_smbone2']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
