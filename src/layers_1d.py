@@ -56,7 +56,7 @@ class ResnetBackbone(nn.Module):
 
     def __init__(self, cl_input_channels, cl_num_filters, cl_stride):
         super(ResnetBackbone, self).__init__()
-        self.in_planes = 64
+        self.in_planes = cl_num_filters
 
         def _make_layer(block, planes, num_blocks, stride):
             strides = [stride] + [1] * (num_blocks - 1)
@@ -68,14 +68,14 @@ class ResnetBackbone(nn.Module):
 
         self.backbone = nn.Sequential(
             nn.Conv1d(in_channels=cl_input_channels,
-                      out_channels=64,
+                      out_channels=cl_num_filters, # was 64
                       kernel_size=1, # 3,
                       stride=1,
                       # padding=1,
                       bias=False),
-            nn.BatchNorm1d(64),
+            nn.BatchNorm1d(cl_num_filters), # was 64
             nn.ReLU(),
-            _make_layer(block=BasicBlock, planes=64, num_blocks=3,
+            _make_layer(block=BasicBlock, planes=cl_num_filters, num_blocks=3,
                         stride=1),  # num_blocks=2 or 3
             _make_layer(block=BasicBlock,
                         planes=cl_num_filters,
@@ -90,12 +90,13 @@ class ResnetBackbone(nn.Module):
 #### Capsule Layer ####
 class CapsuleFC(nn.Module):
     def __init__(self, in_n_capsules, in_d_capsules, out_n_capsules,
-                 out_d_capsules):
+                 out_d_capsules, gap=False):
         super(CapsuleFC, self).__init__()
         self.in_n_capsules = in_n_capsules
         self.in_d_capsules = in_d_capsules
         self.out_n_capsules = out_n_capsules
         self.out_d_capsules = out_d_capsules
+        self.use_gap = gap
 
         ###
         # NOTE: Assuming matrix pose here.
@@ -130,6 +131,12 @@ class CapsuleFC(nn.Module):
         # a: dim of capsules in current layer
         # m: num of capsules in next layer
         # d: dim of capsules in next layer
+
+        # if input from conv: [bs, num_capsules_prev, "img_size", caps_dim]
+        # if input from fc: [bs, num_capsules_prev, caps_dim]
+        if self.use_gap and len(input.shape) == 4:
+            input = torch.mean(input, dim=2)
+
         pose = self.maybe_permute_input(input)
 
         w = self.w

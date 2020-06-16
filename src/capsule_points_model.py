@@ -77,34 +77,46 @@ class CapsulePointsModel(nn.Module):
                     in_n_caps = capsules[i - 1]['num_caps']
                     in_d_caps = capsules[i - 1]['caps_dim']
                 elif capsules[i - 1]['type'] == 'CONV':
-                    in_n_caps = capsules[i-1]['num_caps'] * capsules[i-1]['out_img_size']
+                    if capsules[i].get('gap'):
+                        in_n_caps = capsules[i-1]['num_caps']
+                    else:
+                        in_n_caps = capsules[i-1]['num_caps'] * capsules[i-1]['out_img_size']
                     in_d_caps = capsules[i - 1]['caps_dim']
+                # FCCapsule 3:  2016 36 32 36
+                print('FCCapsule %d: ' % i, in_n_caps, in_d_caps, capsules[i]['num_caps'], capsules[i]['caps_dim'])
                 self.capsule_layers.append(
                     layers_1d.CapsuleFC(
                         in_n_capsules=in_n_caps,
                         in_d_capsules=in_d_caps,
                         out_n_capsules=capsules[i]['num_caps'],
-                        out_d_capsules=capsules[i]['caps_dim']
+                        out_d_capsules=capsules[i]['caps_dim'],
+                        gap=capsules[i].get('gap', False)
                     )
                 )
 
         ## Class Capsule Layer
+        class_capsules = params['class_capsules']
         if not len(capsules) == 0:
             if capsules[-1]['type'] == 'FC':
                 in_n_caps = capsules[-1]['num_caps']
                 in_d_caps = capsules[-1]['caps_dim']
             elif capsules[-1]['type'] == 'CONV':
-                in_n_caps = capsules[-1]['num_caps'] * capsules[-1]['out_img_size']
+                if class_capsules.get('gap'):
+                    in_n_caps = capsules[-1]['num_caps']
+                else:
+                    in_n_caps = capsules[-1]['num_caps'] * capsules[i-1]['out_img_size']
                 in_d_caps = capsules[-1]['caps_dim']
         else:
             in_n_caps = primary['num_caps'] * primary['out_img_size']
             in_d_caps = primary['caps_dim']
+        # ClassCapsule : 32 36 16 36
         self.capsule_layers.append(
             layers_1d.CapsuleFC(
                 in_n_capsules=in_n_caps,
                 in_d_capsules=in_d_caps,
-                out_n_capsules=params['class_capsules']['num_caps'],
-                out_d_capsules=params['class_capsules']['caps_dim'],
+                out_n_capsules=class_capsules['num_caps'],
+                out_d_capsules=class_capsules['caps_dim'],
+                gap=capsules[i].get('gap', False)
             )
         )
 
