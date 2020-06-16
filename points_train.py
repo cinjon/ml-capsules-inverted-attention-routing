@@ -324,7 +324,7 @@ def get_loaders(args, rank=0, is_tsne=False):
             root, split='val', num_frames=args.num_frames,
             stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
             use_diff_object=args.use_diff_object,
-            rotation_range=rotation_train, rotation_same=rotation_same)
+            rotation_range=rotation_test, rotation_same=rotation_same)
 
     if args.num_gpus == 1 or is_tsne:
         train_loader = torch.utils.data.DataLoader(
@@ -780,6 +780,8 @@ if __name__ == '__main__':
     parser.add_argument('--no_use_comet',
                         action='store_true',
                         help='use comet or not')
+    parser.add_argument('--linpred_test_only', action='store_true',
+                        help='whether to only do the linpred test and exit')
     parser.add_argument('--do_tsne_test_every',
                         default=None, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
