@@ -28,6 +28,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import configs
 import cinjon_point_jobs as cinjon_jobs
+import linpred_train
 import zeping_point_jobs as zeping_jobs
 from src import capsule_points_model
 from src.shapenet import ShapeNet55
@@ -628,7 +629,7 @@ def main(gpu, args, port=12355):
         assert(args.name is not None and args.counter is not None)
         store_dir = os.path.join(args.results_dir, args.name, str(args.counter), today)
 
-    if gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
+    if not args.linpred_test_only and gpu == 0 and not os.path.isdir(store_dir) and not args.debug:
         os.makedirs(store_dir)
 
     torch.cuda.set_device(gpu)
@@ -680,16 +681,8 @@ def main(gpu, args, port=12355):
 
     if args.linpred_test_only:
         print('\n***\nStarting LinPred Test (%d)\n***' % start_epoch)
-        linpred_train.run_ssl_model(
-            start_epoch, net, args.data_root, args.affnist_root, comet_exp,
-            args.mnist_batch_size, args.colored, args.num_workers,
-            config['params'], args.backbone, args.num_routing, num_frames,
-            args.use_presence_probs, args.presence_temperature,
-            args.presence_loss_type, do_capsule_computation, args.mnist_lr,
-            args.mnist_weight_decay, args.affnist_subset, args.step_length,
-            args.mnist_classifier_strategy, args.affnist_dataset_loader,
-            args.resume_dir, args.image_size)
-        print('\n***\nEnded MNist Test (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_shapenet(start_epoch, net, args, config, comet_exp)
+        print('\n***\nEnded LinPred Test (%d)\n***' % start_epoch)
         return
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
@@ -749,9 +742,9 @@ def main(gpu, args, port=12355):
             print('\n***\nCleared Cache (%d)\n***' % epoch)
 
         if all([
-            args.do_modelnet_test_every is not None,
-            epoch % args.do_modelnet_test_every == 0,
-            epoch > args.do_modelnet_test_after
+                args.do_modelnet_test_every is not None,
+                epoch % args.do_modelnet_test_every == 0,
+                epoch > args.do_modelnet_test_after,
         ]):
             print('\n***\nStarting ModelNet Test (%d)\n***' % epoch)
             run_modelnet_test(args, config, net, device, epoch, comet_exp=comet_exp)
@@ -841,6 +834,10 @@ if __name__ == '__main__':
                         help='weight decay')
     parser.add_argument('--seed', default=0, type=int, help='random seed')
     parser.add_argument('--epoch', default=350, type=int, help='number of epoch')
+    parser.add_argument('--linear_batch_size',
+                        default=32,
+                        type=int,
+                        help='number of batch size')
     parser.add_argument('--batch_size',
                         default=16,
                         type=int,
@@ -885,15 +882,15 @@ if __name__ == '__main__':
                         default='/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/modelnet/modelnet40_ply_hdf5_2048',
                         help='path to modelnet data')
     parser.add_argument('--do_modelnet_test_every',
-                        default=500, type=int,
+                        default=25, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'every this many epochs.')
     parser.add_argument('--do_modelnet_test_after',
-                        default=500, type=int,
+                        default=199, type=int,
                         help='if an integer > 0, then do the mnist_affnist test ' \
                         'starting at this epoch.')
     parser.add_argument('--modelnet_test_epoch',
-                        default=20, type=int,
+                        default=10, type=int,
                         help='ModelNet test epoch number')
 
     args = parser.parse_args()
@@ -915,11 +912,12 @@ if __name__ == '__main__':
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
 
-    if args.counter == 34 and args.linpred_test_only:
+    if args.counter == 34:
+        args.linpred_test_only = True
         args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet'
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
         args.resume_dir = os.path.join(
-            base_dir, '2020.06.15/34/2020-06-15-05-54-27/ckpt.epoch150.pth')
+            base_dir, '2020.06.15/34/2020-06-15-05-54-27')
         args.resume_epoch = 150
 
     default_port = random.randint(10000, 19000)

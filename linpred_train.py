@@ -26,8 +26,11 @@ import torchvision.transforms as transforms
 
 import configs
 from src import capsule_time_model
+from src import capsule_points_model
 from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
 from src.affnist import AffNist
+from src.shapenet import ShapeNet55
+from src.modelnet import ModelNet
 
 
 class Averager():
@@ -226,6 +229,102 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
         print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
 
 
+def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
+    stepsize_range = [float(k) for k in args.shapenet_stepsize_range.split(',')]
+    stepsize_fixed = args.shapenet_stepsize_fixed
+    if args.shapenet_rotation_train:
+        rotation_train = [float(k) for k in args.shapenet_rotation_train.split(',')]
+    else:
+        rotation_train = None
+    if args.shapenet_rotation_test:
+        rotation_test = [float(k) for k in args.shapenet_rotation_test.split(',')]
+    else:
+        rotation_test = None
+
+    rotation_same = args.shapenet_rotation_same
+    print('Shapetnet Info: ', args.dataset, args.num_output_classes)
+    root = os.path.join(args.data_root, args.dataset.replace('shapenet', 'dataset'))
+    train_set = ShapeNet55(
+        root, split='train', num_frames=1,
+        stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+        use_diff_object=args.use_diff_object,
+        rotation_range=rotation_train, rotation_same=rotation_same)
+    test_set = ShapeNet55(
+        root, split='val', num_frames=1,
+        stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+        use_diff_object=args.use_diff_object,
+        rotation_range=rotation_test, rotation_same=rotation_same)
+
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=args.linear_batch_size,
+                                               shuffle=True)
+    # We do shuffle so taht we can test it before epoch starts.
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=args.linear_batch_size,
+                                              shuffle=True)
+
+    net = capsule_points_model.CapsulePointsModel(
+        config['params'], args, linear_classifier_out=args.num_output_classes)
+
+    optimizer = optim.Adam(net.parameters(), lr=1e-2, weight_decay=5e-4)
+    net.to('cuda')
+    net = torch.nn.DataParallel(net)
+
+    current_state_dict = net.state_dict()
+    trained_state_dict = model.state_dict()
+    current_state_dict.update(trained_state_dict)
+    net.load_state_dict(current_state_dict)
+    print('Loading...')
+    for name, param in net.named_parameters():
+        if 'fc_head' not in name:
+            param.requires_grad = False
+        else:
+            print('found FC Head')
+    print('Done Loading...')
+
+    start_epoch = 1
+    total_epochs = 20
+
+    test_loss, test_acc = test_shapenet(0, net, test_loader)
+    test_metrics = {
+        'ssl%d acc/shapenet' % ssl_epoch: test_acc,
+        'ssl%d loss/shapenet' % ssl_epoch: test_loss,
+    }
+    if comet_exp is not None:
+        with comet_exp.test():
+            comet_exp.log_metrics(test_metrics, step=0)
+    print('Before training: ')
+    print(sorted(test_metrics.items()))
+
+    for epoch in range(start_epoch, start_epoch + total_epochs):
+        train_loss, train_acc = train_shapenet(epoch, net, optimizer, train_loader)
+        if comet_exp is not None:
+            with comet_exp.train():
+                comet_exp.log_metrics(
+                    {'ssl%d acc/shapenet' % ssl_epoch: train_acc,
+                     'ssl%d loss/shapenet' % ssl_epoch: train_loss},
+                    step=epoch
+                )
+
+        test_loss, test_acc = test_shapenet(epoch, net, test_loader)
+        test_metrics = {
+            'ssl%d acc/shapenet' % ssl_epoch: test_acc,
+            'ssl%d loss/shapenet' % ssl_epoch: test_loss
+        }
+        loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
+            train_loss, test_loss
+        )
+        acc_str = 'Train Acc %.6f, Test Acc %.6f' % (
+            train_acc, test_acc
+        )
+
+        if comet_exp is not None:
+            with comet_exp.test():
+                comet_exp.log_metrics(test_metrics, step=epoch)
+
+        print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
+
+
 def get_mnist_loss(model, images, labels):
     batch_size, num_images = images.shape[:2]
 
@@ -237,6 +336,22 @@ def get_mnist_loss(model, images, labels):
     else:
         output, poses = ret
 
+    labels = labels.squeeze()
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
+    return loss, stats
+
+
+def get_shapenet_loss(model, points, labels):
+    batch_size, num_points = points.shape[:2]
+    # Change view so that we can put everything through the model at once.
+    points = points.view(batch_size * num_points, *points.shape[2:])
+    output = model(points)
+    # print('shapenet: ', type(output), output.shape, points.shape, num_points, batch_size)
     labels = labels.squeeze()
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
@@ -351,6 +466,99 @@ def test(epoch, net, loader, is_affnist=False, resume_dir=None):
 
             if is_affnist and batch_idx == 5000:
                 break
+
+        test_loss = averages['loss'].item()
+        test_acc = averages['accuracy'].item()
+
+    print('Test Acc: %.5f / check_sum: %.5f / check_total: %d' % (
+        test_acc, check_sum, check_total))
+    return test_loss, test_acc
+
+
+# Training
+def train_shapenet(epoch, net, optimizer, loader):
+    net.train()
+
+    averages = {
+        'loss': Averager()
+    }
+    check_total = 0
+    check_sum = 0
+
+    t = time.time()
+    optimizer.zero_grad()
+    device = 'cuda'
+    for batch_idx, (points, labels) in enumerate(loader):
+        points = points.to(device)
+        labels = labels.to(device)
+        loss, stats = get_shapenet_loss(net, points, labels)
+        averages['loss'].add(loss.item())
+        for key, value in stats.items():
+            if key not in averages:
+                averages[key] = Averager()
+            averages[key].add(value)
+            if key == 'accuracy':
+                check_total += len(points)
+                check_sum += value * len(points)
+        extra_s = 'Acc: {:.5f}.'.format(
+            averages['accuracy'].item()
+        )
+        extra_s += ' --> check_sum: %.4f, check_total: %d' % (check_sum, check_total)
+
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if batch_idx % 100 == 0:
+            log_text = ('Train Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+            print(log_text.format(epoch, batch_idx, len(loader),
+                                  time.time() - t, averages['loss'].item())
+            )
+            t = time.time()
+
+    train_loss = averages['loss'].item()
+    train_acc = averages['accuracy'].item()
+    print('Train Acc: %.5f / check_sum: %.5f / check_total: %d' % (
+        train_acc, check_sum, check_total))
+    return train_loss, train_acc
+
+
+def test_shapenet(epoch, net, loader):
+    net.eval()
+    averages = {
+        'loss': Averager()
+    }
+    check_total = 0
+    check_sum = 0
+
+    t = time.time()
+    device = 'cuda'
+    with torch.no_grad():
+        for batch_idx, (points, labels) in enumerate(loader):
+            points = points.to(device)
+            labels = labels.to(device)
+
+            loss, stats = get_shapenet_loss(net, points, labels)
+            averages['loss'].add(loss.item())
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+                if key == 'accuracy':
+                    check_total += len(points)
+                    check_sum += value * len(points)
+
+            extra_s = 'Acc: {:.5f}.'.format(
+                averages['accuracy'].item()
+            )
+            extra_s += ' --> check_sum: %.4f, check_total: %d' % (check_sum, check_total)
+
+            if batch_idx % 50 == 0 and batch_idx > 0:
+                log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+                print(log_text.format(epoch, batch_idx, len(loader),
+                                      time.time() - t, averages['loss'].item())
+                )
+                t = time.time()
 
         test_loss = averages['loss'].item()
         test_acc = averages['accuracy'].item()

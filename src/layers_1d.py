@@ -54,9 +54,13 @@ class BasicBlock(nn.Module):
 
 class ResnetBackbone(nn.Module):
 
-    def __init__(self, cl_input_channels, cl_num_filters, cl_stride):
+    def __init__(self, cl_input_channels, cl_num_filters, cl_stride, args=None):
         super(ResnetBackbone, self).__init__()
-        self.in_planes = cl_num_filters
+        cinjon_is_dumb = args.config == 'resnet_backbone_points16_3conv1fc' 
+        if cinjon_is_dumb:
+            self.in_planes = 64
+        else:
+            self.in_planes = cl_num_filters
 
         def _make_layer(block, planes, num_blocks, stride):
             strides = [stride] + [1] * (num_blocks - 1)
@@ -66,16 +70,18 @@ class ResnetBackbone(nn.Module):
                 self.in_planes = planes * block.expansion
             return nn.Sequential(*layers)
 
+        out_channels = 64 if cinjon_is_dumb else cl_num_filters
+        print('Backeone: ', args.config, cinjon_is_dumb, self.in_planes, cl_num_filters)
         self.backbone = nn.Sequential(
             nn.Conv1d(in_channels=cl_input_channels,
-                      out_channels=cl_num_filters, # was 64
+                      out_channels=out_channels, # was 64
                       kernel_size=1, # 3,
                       stride=1,
                       # padding=1,
                       bias=False),
-            nn.BatchNorm1d(cl_num_filters), # was 64
+            nn.BatchNorm1d(out_channels), # was 64
             nn.ReLU(),
-            _make_layer(block=BasicBlock, planes=cl_num_filters, num_blocks=3,
+            _make_layer(block=BasicBlock, planes=out_channels, num_blocks=3,
                         stride=1),  # num_blocks=2 or 3
             _make_layer(block=BasicBlock,
                         planes=cl_num_filters,
@@ -85,6 +91,40 @@ class ResnetBackbone(nn.Module):
 
     def forward(self, x):
         return self.backbone(x)
+
+
+# class GeometricBackbone(nn.Module):
+
+#     def __init__(self, cl_input_channels, cl_num_filters, cl_stride):
+#         super(ResnetBackbone, self).__init__()
+
+#         def _make_layer(block, planes, num_blocks, stride):
+#             strides = [stride] + [1] * (num_blocks - 1)
+#             layers = []
+#             for stride in strides:
+#                 layers.append(block(self.in_planes, planes, stride))
+#                 self.in_planes = planes * block.expansion
+#             return nn.Sequential(*layers)
+
+#         self.backbone = nn.Sequential(
+#             nn.Conv1d(in_channels=cl_input_channels,
+#                       out_channels=cl_num_filters, # was 64
+#                       kernel_size=1, # 3,
+#                       stride=1,
+#                       # padding=1,
+#                       bias=False),
+#             nn.BatchNorm1d(cl_num_filters), # was 64
+#             nn.ReLU(),
+#             _make_layer(block=BasicBlock, planes=cl_num_filters, num_blocks=3,
+#                         stride=1),  # num_blocks=2 or 3
+#             _make_layer(block=BasicBlock,
+#                         planes=cl_num_filters,
+#                         num_blocks=4,
+#                         stride=cl_stride),  # num_blocks=2 or 4
+#         )
+
+#     def forward(self, x):
+#         return self.backbone(x)
 
 
 #### Capsule Layer ####

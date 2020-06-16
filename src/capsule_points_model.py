@@ -18,7 +18,7 @@ from src import layers_1d
 # Capsule model
 class CapsulePointsModel(nn.Module):
 
-    def __init__(self, params, args):
+    def __init__(self, params, args, linear_classifier_out=None):
         super(CapsulePointsModel, self).__init__()
         #### Parameters
 
@@ -29,7 +29,8 @@ class CapsulePointsModel(nn.Module):
         backbone = params['backbone']
         self.pre_caps = layers_1d.ResnetBackbone(backbone['input_dim'],
                                                  backbone['output_dim'],
-                                                 backbone['stride'])
+                                                 backbone['stride'],
+                                                 args=args)
 
         ## Primary Capsule Layer. In the same spirit as the image version, we
         # use a Conv here, but it has to be 1d. Maybe this should be a set
@@ -83,7 +84,6 @@ class CapsulePointsModel(nn.Module):
                         in_n_caps = capsules[i-1]['num_caps'] * capsules[i-1]['out_img_size']
                     in_d_caps = capsules[i - 1]['caps_dim']
                 # FCCapsule 3:  2016 36 32 36
-                print('FCCapsule %d: ' % i, in_n_caps, in_d_caps, capsules[i]['num_caps'], capsules[i]['caps_dim'])
                 self.capsule_layers.append(
                     layers_1d.CapsuleFC(
                         in_n_capsules=in_n_caps,
@@ -119,6 +119,12 @@ class CapsulePointsModel(nn.Module):
                 gap=capsules[i].get('gap', False)
             )
         )
+
+        self.has_classifier = linear_classifier_out and linear_classifier_out > 0
+        if self.has_classifier:
+            in_dim = class_capsules['num_caps']
+            out_dim = linear_classifier_out
+            self.fc_head = nn.Linear(in_dim, out_dim)
 
     def get_presence(self, final_pose):
         if not self.presence_type:
@@ -167,6 +173,8 @@ class CapsulePointsModel(nn.Module):
         ## After Capsule
         pose = capsule_values[-1]
         presence = self.get_presence(pose)
+        if self.has_classifier:
+            return self.fc_head(presence)
         return pose, presence
 
 
@@ -181,7 +189,8 @@ class BackboneModel(nn.Module):
         backbone = params['backbone']
         self.pre_caps = layers_1d.ResnetBackbone(backbone['input_dim'],
                                                  backbone['output_dim'],
-                                                 backbone['stride'])
+                                                 backbone['stride'],
+                                                 args=args)
 
         self.is_classifier = 'xent' in args.criterion
         if self.is_classifier:
