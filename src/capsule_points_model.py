@@ -159,8 +159,7 @@ class CapsulePointsModel(nn.Module):
 
 
 class BackboneModel(nn.Module):
-
-    def __init__(self, params, args):
+    def __init__(self, params, args, out_channels=None):
         super(BackboneModel, self).__init__()
 
         self.num_routing = args.num_routing  # >3 may cause slow converging
@@ -179,7 +178,10 @@ class BackboneModel(nn.Module):
             input_dim *= backbone['inp_img_size']
             input_dim /= backbone['stride']
             input_dim = int(input_dim)
-            output_dim = args.num_output_classes
+            if out_channels is None:
+                output_dim = args.num_output_classes
+            else:
+                output_dim = out_channels
             self.fc_head = nn.Linear(input_dim, output_dim)
 
     def forward(self, x, return_embedding=False):
@@ -246,14 +248,17 @@ class PrimaryPointCapsLayer(nn.Module):
         return output_tensor
 
 class NewBackboneModel(nn.Module):
-    def __init__(self, params, args):
+    def __init__(self, params, args, out_channels=None):
         super(NewBackboneModel, self).__init__()
         backbone = params['backbone']
         self.prim_cap_size = backbone['prim_cap_size']
         self.prim_vec_size = backbone['prim_vec_size']
         self.num_points = backbone['num_points']
 
-        self.out_channels = args.num_output_classes
+        if out_channels is None:
+            self.out_channels = args.num_output_classes
+        else:
+            self.out_channels = out_channels
 
         self.presence_type = args.presence_type
         self.is_classifier = 'xent' in args.criterion

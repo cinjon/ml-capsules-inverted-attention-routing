@@ -430,7 +430,7 @@ def run(find_counter=None):
         num_gpus = 1
         time = 8
         job.update({
-            'name': '2020.06.14',
+            'name': '2020.06.15',
             'counter': find_counter,
             'config': 'pointcapsnet_backbone_points5_cap16',
             'criterion': 'backbone_xent',
@@ -447,7 +447,8 @@ def run(find_counter=None):
             'num_output_classes': 16,
             'do_modelnet_test_after': 30,
             'do_modelnet_test_every': 10,
-            'modelnet_test_epoch': 30
+            'modelnet_test_epoch': 30,
+            'num_workers': 0,
         })
 
         if find_counter == 27:
@@ -467,7 +468,7 @@ def run(find_counter=None):
         num_gpus = 1
         time = 8
         job.update({
-            'name': '2020.06.14',
+            'name': '2020.06.15',
             'counter': find_counter,
             'config': 'resnet_backbone_points16',
             'criterion': 'backbone_xent',
@@ -484,7 +485,8 @@ def run(find_counter=None):
             'num_output_classes': 16,
             'do_modelnet_test_after': 30,
             'do_modelnet_test_every': 10,
-            'modelnet_test_epoch': 30
+            'modelnet_test_epoch': 30,
+            'num_workers': 0,
         })
 
         if find_counter == 29:

@@ -140,29 +140,27 @@ def count_parameters(model):
     #         print(name, param.numel())
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-class LinearClassifier(nn.Module):
-    def __init__(self, in_channels, out_channels=40):
-        super(LinearClassifier, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
 
-        self.fc_head = nn.Linear(
-            self.in_channels, self.out_channels)
-
-    def forward(self, x):
-        return self.fc_head(x.view(x.size(0), -1))
-
-def run_modelnet_test(args, net, device, current_epoch, comet_exp=None):
-    net.eval()
-
-    # TODO: this is hard coded. Need to find a way to handle both
-    # BackboneModel and NewBackboneModel
-    if 'resnet' in args.config:
-        modelnet_net = LinearClassifier(1024 * 128)
-    else:
-        modelnet_net = LinearClassifier(1024 * 16)
-
+def run_modelnet_test(args, config, net, device, current_epoch, comet_exp=None):
+    if 'pointcapsnet' in args.config:
+        modelnet_net = capsule_points_model.NewBackboneModel(config['params'], args, out_channels=40)
+    elif 'resnet' in args.config:
+        modelnet_net = capsule_points_model.BackboneModel(config['params'], args, out_channels=40)
     modelnet_net = modelnet_net.cuda()
+
+    # Load weights from net
+    model_dict = modelnet_net.state_dict()
+    pretrained_dict = net.state_dict()
+    pretrained_dict = {k[7:]: v for k, v in pretrained_dict.items() if 'fc_head' not in k}
+    model_dict.update(pretrained_dict)
+    modelnet_net.load_state_dict(model_dict)
+
+    # Freeze model
+    for param in modelnet_net.parameters():
+        param.requires_grad = False
+    # Unfreeze last layer
+    modelnet_net.fc_head.weight.requires_grad = True
+    modelnet_net.fc_head.bias.requires_grad = True
 
     optimizer = optim.Adam(modelnet_net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -184,7 +182,7 @@ def run_modelnet_test(args, net, device, current_epoch, comet_exp=None):
 
     # Train
     for epoch in range(args.modelnet_test_epoch):
-        net.train()
+        modelnet_net.train()
 
         averages = {
             'loss': Averager(),
@@ -200,8 +198,9 @@ def run_modelnet_test(args, net, device, current_epoch, comet_exp=None):
             labels = labels.squeeze()
             labels = labels.cuda(device)
 
-            output = net(points, return_embedding=True)
-            output = modelnet_net(output)
+            # output = net(points, return_embedding=True)
+            # output = modelnet_net(output)
+            output, _ = modelnet_net(points)
             loss = F.cross_entropy(output, labels)
             predictions = torch.argmax(output, dim=1)
             accuracy = (predictions == labels).float().mean().item()
@@ -242,63 +241,64 @@ def run_modelnet_test(args, net, device, current_epoch, comet_exp=None):
 
         t = time.time()
 
-    # Test
-    modelnet_net.eval()
+        # Test
+        modelnet_net.eval()
 
-    averages = {
-        'modelnet_loss': Averager()
-    }
+        averages = {
+            'modelnet_%depoch_loss' % epoch: Averager()
+        }
 
-    t = time.time()
+        t = time.time()
 
-    with torch.no_grad():
-        for batch_idx, (points, labels) in enumerate(test_loader):
-            points = points[:, 0]
-            points = points.cuda(device)
-            labels = labels.squeeze()
-            labels = labels.cuda(device)
+        with torch.no_grad():
+            for batch_idx, (points, labels) in enumerate(test_loader):
+                points = points[:, 0]
+                points = points.cuda(device)
+                labels = labels.squeeze()
+                labels = labels.cuda(device)
 
-            output = net(points, return_embedding=True)
-            output = modelnet_net(output)
-            loss = F.cross_entropy(output, labels)
-            predictions = torch.argmax(output, dim=1)
-            accuracy = (predictions == labels).float().mean().item()
-            stats = {
-                'modelnet_accuracy': accuracy,
-            }
+                # output = net(points, return_embedding=True)
+                # output = modelnet_net(output)
+                output, _ = modelnet_net(points)
+                loss = F.cross_entropy(output, labels)
+                predictions = torch.argmax(output, dim=1)
+                accuracy = (predictions == labels).float().mean().item()
+                stats = {
+                    'modelnet_%depoch_accuracy' % epoch: accuracy,
+                }
 
-            averages['modelnet_loss'].add(loss.item())
-            for key, value in stats.items():
-                if key not in averages:
-                    averages[key] = Averager()
-                averages[key].add(value)
-            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                                 for k, v in averages.items() \
-                                 if 'capsule_prob' not in k])
+                averages['modelnet_%depoch_loss' % epoch].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
-            if batch_idx % 100 == 0 and batch_idx > 0:
-                log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-                print(log_text.format(batch_idx, len(test_loader),
-                                      time.time() - t, averages['modelnet_loss'].item())
-                )
-                t = time.time()
+                if batch_idx % 100 == 0 and batch_idx > 0:
+                    log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+                    print(log_text.format(batch_idx, len(test_loader),
+                                          time.time() - t, averages['modelnet_%depoch_loss' % epoch].item())
+                    )
+                    t = time.time()
 
-    del points
-    torch.cuda.empty_cache()
+        del points
+        torch.cuda.empty_cache()
 
-    extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
-                         for k, v in averages.items()])
-    log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
-    print(log_text.format(batch_idx, len(test_loader),
-                          time.time() - t, averages['modelnet_loss'].item()))
-    test_loss = averages['modelnet_loss'].item()
+        extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                             for k, v in averages.items()])
+        log_text = ('Val ModelNet {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
+        print(log_text.format(batch_idx, len(test_loader),
+                              time.time() - t, averages['modelnet_%depoch_loss' % epoch].item()))
+        test_loss = averages['modelnet_%depoch_loss' % epoch].item()
 
-    test_acc = averages['modelnet_accuracy'].item() if 'modelnet_loss' in averages else None
+        test_acc = averages['modelnet_%depoch_accuracy' % epoch].item() # if 'modelnet_accuracy' in averages else None
 
-    if comet_exp:
-        with comet_exp.test():
-            epoch_avgs = {k: v.item() for k, v in averages.items()}
-            comet_exp.log_metrics(epoch_avgs, epoch=current_epoch)
+        if comet_exp:
+            with comet_exp.test():
+                epoch_avgs = {k: v.item() for k, v in averages.items()}
+                comet_exp.log_metrics(epoch_avgs, epoch=current_epoch)
 
 
 def get_loaders(args, rank=0, is_tsne=False):
@@ -724,7 +724,7 @@ def main(gpu, args, port=12355):
             epoch > args.do_modelnet_test_after
         ]):
             print('\n***\nStarting ModelNet Test (%d)\n***' % epoch)
-            run_modelnet_test(args, net, device, epoch, comet_exp=comet_exp)
+            run_modelnet_test(args, config, net, device, epoch, comet_exp=comet_exp)
 
 
 if __name__ == '__main__':
