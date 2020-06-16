@@ -25,5 +25,7 @@ from . import pointcapsnet_backbone_points5_cap16
 from . import pointcapsnet_backbone_points5_cap8
 from . import resnet_backbone_points5
 from . import resnet_backbone_points16
+from . import resnet_backbone_points16_smbone
+from . import resnet_backbone_points16_smbone2
 from . import resnet_backbone_points16_3conv1fc # 3274480 params
 from . import resnet_backbone_points16_4conv1fc # 2205496 params
