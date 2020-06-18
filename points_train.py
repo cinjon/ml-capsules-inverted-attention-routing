@@ -640,8 +640,12 @@ def main(gpu, args, port=12355):
     if args.resume_dir and not args.debug:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
-        checkpoint = torch.load(os.path.join(
-            args.resume_dir, 'ckpt.epoch%d.pth' % args.resume_epoch))
+        try:
+            checkpoint = torch.load(os.path.join(
+                args.resume_dir, 'ckpt.epoch%d.pth' % args.resume_epoch))
+        except Exception as e:
+            checkpoint = torch.load(os.path.join(
+                args.resume_dir, 'ckpt.epoch%d.best.pth' % args.resume_epoch))
         net.load_state_dict(checkpoint['net'])
         start_epoch = checkpoint['epoch']
 
@@ -680,9 +684,12 @@ def main(gpu, args, port=12355):
     device = gpu
 
     if args.linpred_test_only:
-        print('\n***\nStarting LinPred Test (%d)\n***' % start_epoch)
+        print('\n***\nStarting LinPred Test on ShapeNet (%d)\n***' % start_epoch)
         linpred_train.run_ssl_shapenet(start_epoch, net, args, config, comet_exp)
-        print('\n***\nEnded LinPred Test (%d)\n***' % start_epoch)
+        print('\n***\nEnded LinPred Test on ShapeNet (%d)\n***' % start_epoch)
+        print('\n***\nStarting LinPred Test on ModelNet (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_modelnet(start_epoch, net, args, config, comet_exp)
+        print('\n***\nEnded LinPred Test on ModelNet (%d)\n***' % start_epoch)
         return
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
@@ -711,7 +718,7 @@ def main(gpu, args, port=12355):
                 last_test_loss = test_loss
                 last_saved_epoch = epoch
 
-            if not args.debug and epoch >= last_saved_epoch + 15 and \
+            if not args.debug and epoch >= last_saved_epoch + 5 and \
                args.epoch >= 100 and args.criterion == 'nceprobs_selective':
                 state = {
                     'net': net.state_dict(),
@@ -835,7 +842,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=0, type=int, help='random seed')
     parser.add_argument('--epoch', default=350, type=int, help='number of epoch')
     parser.add_argument('--linear_batch_size',
-                        default=32,
+                        default=42,
                         type=int,
                         help='number of batch size')
     parser.add_argument('--batch_size',
@@ -919,6 +926,81 @@ if __name__ == '__main__':
         args.resume_dir = os.path.join(
             base_dir, '2020.06.15/34/2020-06-15-05-54-27')
         args.resume_epoch = 150
+    elif args.counter == 50:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/50/2020-06-16-13-30-09')
+        # TODO: Also do resume_epoch = 66 with this one.
+        args.resume_epoch = 51
+    elif args.counter == 51:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/51/2020-06-16-13-32-26')
+        args.resume_epoch = 51
+    elif args.counter == 52:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/52/2020-06-16-17-42-40/')
+        args.resume_epoch = 36
+    elif args.counter == 53:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/53/2020-06-16-17-41-58')
+        args.resume_epoch = 45
+    elif args.counter == 54:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/54/2020-06-16-17-41-57/')
+        args.resume_epoch = 42
+    elif args.counter == 55:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.16/55/2020-06-16-17-41-56/')
+        args.resume_epoch = 36
+    elif args.counter == 56:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.17/56/2020-06-17-09-19-39')
+        # args.resume_epoch = 78
+        args.resume_epoch = 60
+    elif args.counter == 57:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.17/57/2020-06-17-09-19-39/')
+        # args.resume_epoch = 78
+        args.resume_epoch = 60
+    elif args.counter == 58:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.17/58/2020-06-17-09-19-40/')
+        # args.resume_epoch = 78
+        args.resume_epoch = 60
+    elif args.counter == 59:
+        args.linpred_test_only = True
+        args.num_gpus = 1
+        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+        args.resume_dir = os.path.join(
+            base_dir, '2020.06.17/59/2020-06-17-09-19-40/')
+        # args.resume_epoch = 78
+        args.resume_epoch = 60
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
