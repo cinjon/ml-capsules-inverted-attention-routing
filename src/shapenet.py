@@ -162,15 +162,23 @@ class ShapeNet55(torch.utils.data.Dataset):
         # Translation
         if self.stepsize_fixed:
             stepsize = [self.stepsize_fixed] * self.num_frames
+            stepsizes = np.array([[stepsize]*self.num_frames]*3)
         else:
-            stepsize = np.random.uniform(
-            self.stepsize_range[0],
-            self.stepsize_range[1],
-            self.num_frames
-        )
+            stepsizes = []
+            for i in range(3):
+                stepsize = np.random.uniform(
+                    self.stepsize_range[0],
+                    self.stepsize_range[1],
+                    self.num_frames
+                )
+                stepsizes.append(stepsize)
+        stepsizes = np.array(stepsizes).transpose()
 
+        # This is no longer iterative along the translation axis.
+        # Doign it that way was an easy way to get the pos/neg.
         for i in range(1, self.num_frames):
-            sample[i] += i * stepsize[i]
+            for j in range(3):
+                sample[i][j] += stepsizes[i, j]
 
         # Permute so the channels are in the right dim.
         datum = torch.from_numpy(sample).permute(0, 2, 1).float()
