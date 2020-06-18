@@ -179,10 +179,10 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
     test_loss, test_acc = test(0, net, test_loader, is_affnist=False,
                                resume_dir=resume_dir)
     test_metrics = {
-        'ssl%d acc/mnist' % ssl_epoch: test_acc,
-        'ssl%d loss/mnist' % ssl_epoch: test_loss,
-        'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
-        'ssl%d loss/affnist' % ssl_epoch: affnist_loss
+        'acc/mnist' % ssl_epoch: test_acc,
+        'loss/mnist' % ssl_epoch: test_loss,
+        'acc/affnist' % ssl_epoch: affnist_acc,
+        'loss/affnist' % ssl_epoch: affnist_loss
     }
     if comet_exp is not None:
         with comet_exp.test():
@@ -195,15 +195,15 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
         if comet_exp is not None:
             with comet_exp.train():
                 comet_exp.log_metrics(
-                    {'ssl%d acc/mnist' % ssl_epoch: train_acc,
-                     'ssl%d loss/mnist' % ssl_epoch: train_loss},
+                    {'acc/mnist' % ssl_epoch: train_acc,
+                     'loss/mnist' % ssl_epoch: train_loss},
                     step=epoch
                 )
 
         test_loss, test_acc = test(epoch, net, test_loader)
         test_metrics = {
-            'ssl%d acc/mnist' % ssl_epoch: test_acc,
-            'ssl%d loss/mnist' % ssl_epoch: test_loss
+            'acc/mnist' % ssl_epoch: test_acc,
+            'loss/mnist' % ssl_epoch: test_loss
         }
         loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
             train_loss, test_loss
@@ -216,8 +216,8 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
             affnist_loss, affnist_acc = test(epoch, net, affnist_test_loader,
                                              is_affnist=True, resume_dir=resume_dir)
             test_metrics.update({
-                'ssl%d acc/affnist' % ssl_epoch: affnist_acc,
-                'ssl%d loss/affnist' % ssl_epoch: affnist_loss
+                'acc/affnist' % ssl_epoch: affnist_acc,
+                'loss/affnist' % ssl_epoch: affnist_loss
             })
             loss_str += ', Affnist Loss %.6f' % affnist_loss
             acc_str += ', Affnist Acc %.6f' % affnist_acc
@@ -283,12 +283,12 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
     print('Done Loading...')
 
     start_epoch = 1
-    total_epochs = 20
+    total_epochs = 8
 
     test_loss, test_acc = test_shapenet(0, net, test_loader)
     test_metrics = {
-        'ssl%d acc/shapenet' % ssl_epoch: test_acc,
-        'ssl%d loss/shapenet' % ssl_epoch: test_loss,
+        'acc/shapenet': test_acc,
+        'loss/shapenet': test_loss,
     }
     if comet_exp is not None:
         with comet_exp.test():
@@ -301,15 +301,96 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
         if comet_exp is not None:
             with comet_exp.train():
                 comet_exp.log_metrics(
-                    {'ssl%d acc/shapenet' % ssl_epoch: train_acc,
-                     'ssl%d loss/shapenet' % ssl_epoch: train_loss},
+                    {'acc/shapenet': train_acc,
+                     'loss/shapenet': train_loss},
                     step=epoch
                 )
 
         test_loss, test_acc = test_shapenet(epoch, net, test_loader)
         test_metrics = {
-            'ssl%d acc/shapenet' % ssl_epoch: test_acc,
-            'ssl%d loss/shapenet' % ssl_epoch: test_loss
+            'acc/shapenet': test_acc,
+            'loss/shapenet': test_loss
+        }
+        loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
+            train_loss, test_loss
+        )
+        acc_str = 'Train Acc %.6f, Test Acc %.6f' % (
+            train_acc, test_acc
+        )
+
+        if comet_exp is not None:
+            with comet_exp.test():
+                comet_exp.log_metrics(test_metrics, step=epoch)
+
+        print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
+
+
+def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
+    train_set = ModelNet(args.modelnet_root, train=True)
+    test_set = ModelNet(args.modelnet_root, train=False)
+
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_set,
+        batch_size=args.linear_batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        drop_last=True)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set,
+        batch_size=args.linear_batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        drop_last=True)
+
+    net = capsule_points_model.CapsulePointsModel(
+        config['params'], args, linear_classifier_out=40)
+
+    # NOTE: removed weight decay and reduced lr from 1e-2.
+    optimizer = optim.Adam(net.parameters(), lr=3e-3)
+    net.to('cuda')
+    net = torch.nn.DataParallel(net)
+
+    current_state_dict = net.state_dict()
+    trained_state_dict = model.state_dict()
+    current_state_dict.update(trained_state_dict)
+    net.load_state_dict(current_state_dict)
+    print('Loading...')
+    for name, param in net.named_parameters():
+        if 'fc_head' not in name:
+            param.requires_grad = False
+        else:
+            print('found FC Head')
+    print('Done Loading...')
+
+    start_epoch = 1
+    total_epochs = 8
+
+    test_loss, test_acc = test_shapenet(0, net, test_loader)
+    test_metrics = {
+        'acc/modelnet': test_acc,
+        'loss/modelnet': test_loss,
+    }
+    if comet_exp is not None:
+        with comet_exp.test():
+            comet_exp.log_metrics(test_metrics, step=0)
+    print('Before training: ')
+    print(sorted(test_metrics.items()))
+
+    for epoch in range(start_epoch, start_epoch + total_epochs):
+        # Can use train_shapenet for this.
+        train_loss, train_acc = train_shapenet(epoch, net, optimizer, train_loader)
+        if comet_exp is not None:
+            with comet_exp.train():
+                comet_exp.log_metrics(
+                    {'acc/modelnet': train_acc,
+                     'loss/modelnet': train_loss},
+                    step=epoch
+                )
+
+        test_loss, test_acc = test_shapenet(epoch, net, test_loader)
+        test_metrics = {
+            'acc/modelnet': test_acc,
+            'loss/modelnet': test_loss
         }
         loss_str = 'Train Loss %.6f, Test Loss %.6f' % (
             train_loss, test_loss
