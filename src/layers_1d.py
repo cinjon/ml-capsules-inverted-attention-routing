@@ -277,8 +277,7 @@ class CapsuleConv(nn.Module):
         else:
             next_capsule_value = next_capsule_value.view(
                 next_capsule_value.shape[0], next_capsule_value.shape[1],
-                next_capsule_value.shape[2], next_capsule_value.shape[3],
-                self.sqrt_d, self.sqrt_d
+                next_capsule_value.shape[2], self.sqrt_d, self.sqrt_d
             )
             _query_key = torch.einsum('bnkwax, knxdm, bmwad->bnkmw',
                                       _inputs, w, next_capsule_value)
