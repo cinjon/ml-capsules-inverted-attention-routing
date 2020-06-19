@@ -919,88 +919,89 @@ if __name__ == '__main__':
     args.use_comet = (not args.no_use_comet) and (not args.debug)
     assert args.num_routing > 0
 
-    if args.counter == 34:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.15/34/2020-06-15-05-54-27')
-        args.resume_epoch = 150
-    elif args.counter == 50:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/50/2020-06-16-13-30-09')
-        # TODO: Also do resume_epoch = 66 with this one.
-        args.resume_epoch = 51
-    elif args.counter == 51:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/51/2020-06-16-13-32-26')
-        args.resume_epoch = 51
-    elif args.counter == 52:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/52/2020-06-16-17-42-40/')
-        args.resume_epoch = 36
-    elif args.counter == 53:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/53/2020-06-16-17-41-58')
-        args.resume_epoch = 45
-    elif args.counter == 54:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/54/2020-06-16-17-41-57/')
-        args.resume_epoch = 42
-    elif args.counter == 55:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.16/55/2020-06-16-17-41-56/')
-        args.resume_epoch = 36
-    elif args.counter == 56:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.17/56/2020-06-17-09-19-39')
-        # args.resume_epoch = 78
-        args.resume_epoch = 60
-    elif args.counter == 57:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.17/57/2020-06-17-09-19-39/')
-        # args.resume_epoch = 78
-        args.resume_epoch = 60
-    elif args.counter == 58:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.17/58/2020-06-17-09-19-40/')
-        # args.resume_epoch = 78
-        args.resume_epoch = 60
-    elif args.counter == 59:
-        args.linpred_test_only = True
-        args.num_gpus = 1
-        base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
-        args.resume_dir = os.path.join(
-            base_dir, '2020.06.17/59/2020-06-17-09-19-40/')
-        # args.resume_epoch = 78
-        args.resume_epoch = 60
+    if user == 'cinjon':
+        if args.counter == 34:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.15/34/2020-06-15-05-54-27')
+            args.resume_epoch = 150
+        elif args.counter == 50:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/50/2020-06-16-13-30-09')
+            # TODO: Also do resume_epoch = 66 with this one.
+            args.resume_epoch = 51
+        elif args.counter == 51:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/51/2020-06-16-13-32-26')
+            args.resume_epoch = 51
+        elif args.counter == 52:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/52/2020-06-16-17-42-40/')
+            args.resume_epoch = 36
+        elif args.counter == 53:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/53/2020-06-16-17-41-58')
+            args.resume_epoch = 45
+        elif args.counter == 54:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/54/2020-06-16-17-41-57/')
+            args.resume_epoch = 42
+        elif args.counter == 55:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.16/55/2020-06-16-17-41-56/')
+            args.resume_epoch = 36
+        elif args.counter == 56:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.17/56/2020-06-17-09-19-39')
+            # args.resume_epoch = 78
+            args.resume_epoch = 60
+        elif args.counter == 57:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.17/57/2020-06-17-09-19-39/')
+            # args.resume_epoch = 78
+            args.resume_epoch = 60
+        elif args.counter == 58:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.17/58/2020-06-17-09-19-40/')
+            # args.resume_epoch = 78
+            args.resume_epoch = 60
+        elif args.counter == 59:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.17/59/2020-06-17-09-19-40/')
+            # args.resume_epoch = 78
+            args.resume_epoch = 60
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
