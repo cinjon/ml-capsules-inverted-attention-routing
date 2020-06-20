@@ -1002,6 +1002,22 @@ if __name__ == '__main__':
                 base_dir, '2020.06.17/59/2020-06-17-09-19-40/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+        elif args.counter == 60:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.18/60/2020-06-18-16-10-08')
+            # args.resume_epoch = 78
+            args.resume_epoch = 54
+        elif args.counter == 61:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.18/61/2020-06-18-16-10-08/')
+            # args.resume_epoch = 78
+            args.resume_epoch = 60
 
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
