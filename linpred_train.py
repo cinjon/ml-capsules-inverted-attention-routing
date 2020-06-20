@@ -282,6 +282,10 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
             print('found FC Head')
     print('Done Loading...')
 
+    grad_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    all_params = sum(p.numel() for p in net.parameters())
+    print('Grad Params %d / All Params %d' % (grad_params, all_params))
+
     start_epoch = 1
     total_epochs = 8
 
