@@ -121,8 +121,14 @@ class CapsulePointsModel(nn.Module):
         )
 
         self.has_classifier = linear_classifier_out and linear_classifier_out > 0
+        # presence or pose
+        self.classifier_type = args.classifier_type
         if self.has_classifier:
-            in_dim = class_capsules['num_caps']
+            if self.classifier_type == 'presence':
+                in_dim = class_capsules['num_caps']
+            elif self.classifier_type == 'pose':
+                in_dim = class_capsules['num_caps'] * class_capsules['caps_dim']
+
             out_dim = linear_classifier_out
             self.fc_head = nn.Linear(in_dim, out_dim)
 
@@ -172,10 +178,16 @@ class CapsulePointsModel(nn.Module):
 
         ## After Capsule
         pose = capsule_values[-1]
-        presence = self.get_presence(pose)
         if self.has_classifier:
-            return self.fc_head(presence)
-        return pose, presence
+            if self.classifier_type == 'presence':
+                presence = self.get_presence(pose)
+                return self.fc_head(presence)
+            elif self.classifier_type == 'pose':
+                pose = pose.view(pose.size(0), -1)
+                return self.fc_head(pose)
+        else:
+            presence = self.get_presence(pose)
+            return pose, presence
 
 
 class BackboneModel(nn.Module):

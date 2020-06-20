@@ -326,7 +326,8 @@ def get_loaders(args, rank=0, is_tsne=False):
             rotation_range=rotation_train, rotation_same=rotation_same)
         # NOTE: We changed this to train to test some shit.
         test_set = ShapeNet55(
-            root, split='train', num_frames=args.num_frames,
+            root, split='val', # 'train'
+            num_frames=args.num_frames,
             stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
             use_diff_object=args.use_diff_object,
             rotation_range=rotation_test, rotation_same=rotation_same)
@@ -358,7 +359,7 @@ def get_loaders(args, rank=0, is_tsne=False):
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=args.num_workers
     )
         # drop_last=True)
@@ -890,6 +891,10 @@ if __name__ == '__main__':
                         type=float,
                         help='the number of classes. this is a hack and dumb.')
 
+    parser.add_argument('--classifier_type',
+                        default='presence', # presence or pose.
+                        type=str)
+
     # ModelNet
     parser.add_argument('--modelnet_root',
                         type=str,
@@ -985,6 +990,8 @@ if __name__ == '__main__':
                 base_dir, '2020.06.17/56/2020-06-17-09-19-39')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+            # args.classifier_type = 'presence'
+            args.classifier_type = 'pose'
         elif args.counter == 57:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -1025,6 +1032,6 @@ if __name__ == '__main__':
                 base_dir, '2020.06.18/61/2020-06-18-16-10-08/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
-
+            
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
