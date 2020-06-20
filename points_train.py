@@ -51,6 +51,9 @@ def run_tsne(model, path, epoch, args, comet_exp, num_classes):
 
     with torch.no_grad():
         for loader, split in zip([train_loader, test_loader], ['train', 'test']):
+            if split == 'test' and test_loader.dataset.split == 'train':
+                continue
+
             # if split == 'train':
             #     continue
 
@@ -321,8 +324,9 @@ def get_loaders(args, rank=0, is_tsne=False):
             stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
             use_diff_object=args.use_diff_object,
             rotation_range=rotation_train, rotation_same=rotation_same)
+        # NOTE: We changed this to train to test some shit.
         test_set = ShapeNet55(
-            root, split='val', num_frames=args.num_frames,
+            root, split='train', num_frames=args.num_frames,
             stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
             use_diff_object=args.use_diff_object,
             rotation_range=rotation_test, rotation_same=rotation_same)
@@ -332,8 +336,9 @@ def get_loaders(args, rank=0, is_tsne=False):
             dataset=train_set,
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=args.num_workers,
-            drop_last=True)
+            num_workers=args.num_workers
+        )
+            # drop_last=True)
     else:
         print('Distributed dataloader', rank, args.num_gpus, args.batch_size)
         train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -349,12 +354,14 @@ def get_loaders(args, rank=0, is_tsne=False):
             sampler=train_sampler,
             drop_last=True)
 
+    # We should change this to shuffle=True dumbbutt.
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
-        drop_last=True)
+        num_workers=args.num_workers
+    )
+        # drop_last=True)
     print('Returning data loaders...')
     return train_loader, test_loader
 

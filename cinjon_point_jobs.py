@@ -879,5 +879,46 @@ def run(find_counter=None):
         return counter, _job
 
 
+    # Counter: 64:
+    # Testing what happens if train replaces test.
+    job = {
+        'name': '2020.06.20',
+        'config': 'resnet_backbone_points16_smbone3_gap',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 150,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4
+    }
+    num_gpus = 2
+    time = 24
+    var_arrays = {
+        'config': ['resnet_backbone_points16_smbone3_gap',
+                   'resnet_backbone_points16_smbone4_gap'],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
 if __name__ == '__main__':
     run()
