@@ -834,7 +834,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -956,6 +956,131 @@ def run(find_counter=None):
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 68. I don't actually know that this is the best one to do the
+    # rotation on. But I want to get these started.
+    job = {
+        'name': '2020.06.21',
+        'config': 'resnet_backbone_points55_smbone3_gap',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 24,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-90,90',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4
+    }
+    num_gpus = 2
+    time = 24
+    var_arrays = {
+        'shapenet_rotation_train': ['-90,90', '-45,45']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 70. How do xent baselines do?
+    job = {
+        'name': '2020.06.22',
+        'config': 'resnet_backbone_points55_smbone3_gap',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 32,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 100,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-90,90',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1
+    }
+    num_gpus = 1
+    time = 24
+    var_arrays = {
+        'shapenet_rotation_train': ['-90,90', ''],
+        'classifier_type': ['presence', 'pose']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 74. How do xent baselines do if they're bigger either in width
+    # or in depth.
+    job = {
+        'name': '2020.06.22',
+        'config': 'resnet_backbone_points55_smbone31_gap',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 16,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 100,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-90,90',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1
+    }
+    num_gpus = 1
+    time = 24
+    var_arrays = {
+        'shapenet_rotation_train': ['-90,90', ''],
+        'classifier_type': ['presence', 'pose'],
+        'config': ['resnet_backbone_points55_smbone31_gap',
+                   'resnet_backbone_points55_smbone32_gap']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
