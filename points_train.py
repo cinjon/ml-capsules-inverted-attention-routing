@@ -587,10 +587,11 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
     return test_loss, test_acc
 
 
-def main(gpu, args, port=12355):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = str(port)
-    dist.init_process_group(backend='nccl', rank=gpu, world_size=args.num_gpus)
+def main(gpu, args, port=12355, initialize=True):
+    if initialize:
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = str(port)
+        dist.init_process_group(backend='nccl', rank=gpu, world_size=args.num_gpus)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -604,6 +605,8 @@ def main(gpu, args, port=12355):
     train_loader, test_loader = get_loaders(args, rank=gpu)
     num_frames = 3
 
+    linear_classifier_out = args.num_output_classes if args.criterion == 'xent' else None        
+
     print('==> Building model..')
     if 'backbone' in args.criterion:
         if 'pointcapsnet' in args.config:
@@ -611,7 +614,8 @@ def main(gpu, args, port=12355):
         elif 'resnet' in args.config:
             net = capsule_points_model.BackboneModel(config['params'], args)
     else:
-        net = capsule_points_model.CapsulePointsModel(config['params'], args)
+        net = capsule_points_model.CapsulePointsModel(
+            config['params'], args, linear_classifier_out)
     print(net)
 
     if args.optimizer == 'adam':
@@ -698,6 +702,19 @@ def main(gpu, args, port=12355):
         print('\n***\nStarting LinPred Test on ModelNet (%d)\n***' % start_epoch)
         linpred_train.run_ssl_modelnet(start_epoch, net, args, config, comet_exp)
         print('\n***\nEnded LinPred Test on ModelNet (%d)\n***' % start_epoch)
+
+        if args.counter in [62, 63, 66, 67]:
+            if args.resume_epoch < 66:
+                args.resume_epoch += 6
+                main(gpu, args, initialize=False)
+            elif args.classifier_type == 'pose':
+                args.classifier_type = 'presence'
+                args.resume_epoch = 6
+                main(gpu, args, initialize=False)
+        elif args.counter in [68]:
+            if args.classifier_type == 'pose':
+                args.classifier_type = 'presence'
+                main(gpu, args, initialize=False)
         return
 
     for epoch in range(start_epoch, start_epoch + total_epochs):
@@ -939,6 +956,7 @@ if __name__ == '__main__':
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.15/34/2020-06-15-05-54-27')
             args.resume_epoch = 150
+            args.classifier_type = 'pose'
         elif args.counter == 50:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -947,12 +965,14 @@ if __name__ == '__main__':
                 base_dir, '2020.06.16/50/2020-06-16-13-30-09')
             # TODO: Also do resume_epoch = 66 with this one.
             args.resume_epoch = 51
+            args.classifier_type = 'pose'
         elif args.counter == 51:
             args.linpred_test_only = True
             args.num_gpus = 1
             base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.16/51/2020-06-16-13-32-26')
+            args.classifier_type = 'pose'
             args.resume_epoch = 51
         elif args.counter == 52:
             args.linpred_test_only = True
@@ -961,6 +981,7 @@ if __name__ == '__main__':
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.16/52/2020-06-16-17-42-40/')
             args.resume_epoch = 36
+            args.classifier_type = 'pose'
         elif args.counter == 53:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -968,6 +989,7 @@ if __name__ == '__main__':
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.16/53/2020-06-16-17-41-58')
             args.resume_epoch = 45
+            args.classifier_type = 'pose'
         elif args.counter == 54:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -975,6 +997,7 @@ if __name__ == '__main__':
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.16/54/2020-06-16-17-41-57/')
             args.resume_epoch = 42
+            args.classifier_type = 'pose'
         elif args.counter == 55:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -982,6 +1005,7 @@ if __name__ == '__main__':
             args.resume_dir = os.path.join(
                 base_dir, '2020.06.16/55/2020-06-16-17-41-56/')
             args.resume_epoch = 36
+            args.classifier_type = 'pose'
         elif args.counter == 56:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -991,6 +1015,7 @@ if __name__ == '__main__':
             # args.resume_epoch = 78
             args.resume_epoch = 60
             # args.classifier_type = 'presence'
+            # NOTE: DONE THIS ONE
             args.classifier_type = 'pose'
         elif args.counter == 57:
             args.linpred_test_only = True
@@ -1000,6 +1025,7 @@ if __name__ == '__main__':
                 base_dir, '2020.06.17/57/2020-06-17-09-19-39/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+            args.classifier_type = 'pose'
         elif args.counter == 58:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -1008,6 +1034,7 @@ if __name__ == '__main__':
                 base_dir, '2020.06.17/58/2020-06-17-09-19-40/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+            args.classifier_type = 'pose'
         elif args.counter == 59:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -1016,6 +1043,7 @@ if __name__ == '__main__':
                 base_dir, '2020.06.17/59/2020-06-17-09-19-40/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+            args.classifier_type = 'pose'
         elif args.counter == 60:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -1024,6 +1052,7 @@ if __name__ == '__main__':
                 base_dir, '2020.06.18/60/2020-06-18-16-10-08')
             # args.resume_epoch = 78
             args.resume_epoch = 54
+            args.classifier_type = 'pose'
         elif args.counter == 61:
             args.linpred_test_only = True
             args.num_gpus = 1
@@ -1032,6 +1061,55 @@ if __name__ == '__main__':
                 base_dir, '2020.06.18/61/2020-06-18-16-10-08/')
             # args.resume_epoch = 78
             args.resume_epoch = 60
+            args.classifier_type = 'pose'
+        elif args.counter == 62:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.18/62/2020-06-18-16-23-17')
+            args.resume_epoch = 12
+            args.classifier_type = 'pose'
+        elif args.counter == 63:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.18/63/2020-06-18-16-23-22')
+            args.resume_epoch = 12
+            args.classifier_type = 'pose'
+        elif args.counter == 66:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.20/66/2020-06-20-13-30-08')
+            args.resume_epoch = 12
+            args.classifier_type = 'pose'
+        elif args.counter == 67:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.20/67/2020-06-20-13-30-25')
+            args.resume_epoch = 12
+            args.classifier_type = 'pose'
+        elif args.counter == 68:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.21/68/2020-06-21-11-57-37')
+            args.resume_epoch = 60
+            args.classifier_type = 'pose'
+        elif args.counter == 69:
+            args.linpred_test_only = True
+            args.num_gpus = 1
+            base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
+            args.resume_dir = os.path.join(
+                base_dir, '2020.06.20/67/2020-06-20-13-30-25')
+            args.resume_epoch = 12
+            args.classifier_type = 'pose'
             
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))

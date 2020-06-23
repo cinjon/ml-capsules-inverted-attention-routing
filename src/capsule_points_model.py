@@ -326,7 +326,7 @@ class NewBackboneModel(nn.Module):
 
 
 def get_xent_loss(model, points, labels):
-    output = model(points, return_embedding=False)
+    output = model(points)
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
     accuracy = (predictions == labels).float().mean().item()
