@@ -36,3 +36,5 @@ from . import resnet_backbone_points16_4conv1fc # 2205496 params
 from . import resnet_backbone_points55_smbone3_gap
 from . import resnet_backbone_points55_smbone31_gap
 from . import resnet_backbone_points55_smbone32_gap
+from . import resnet_backbone_points55_smbone33_gap
+from . import resnet_backbone_points55_smbone34_gap

@@ -1085,5 +1085,46 @@ def run(find_counter=None):
         return counter, _job
 
 
+    # Counter: 82. Bigger, one over depth (34) and one over class cpasules (33)
+    job = {
+        'name': '2020.06.23',
+        'config': 'resnet_backbone_points55_smbone31_gap',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 22,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 100,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '-90,90',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1
+    }
+    num_gpus = 1
+    time = 24
+    var_arrays = {
+        'shapenet_rotation_train': ['-90,90', ''],
+        'config': ['resnet_backbone_points55_smbone33_gap',
+                   'resnet_backbone_points55_smbone34_gap']
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
 if __name__ == '__main__':
     run()

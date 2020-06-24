@@ -44,6 +44,13 @@ config = {
             "stride": 2,
             "out_img_size": 127
         }, {
+            "type": "CONV",
+            "num_caps": 48,
+            "caps_dim": 36,
+            "kernel_size": 3,
+            "stride": 2,
+            "out_img_size": 127
+        }, {
             "type": "FC", 
             "num_caps": 48,
             "caps_dim": 36,

@@ -1,4 +1,4 @@
-# nce_select has 1886359 params.
+# nce_select has  params.
 
 import torchvision.transforms as transforms
 
@@ -50,7 +50,7 @@ config = {
             "gap": True
         }],
         "class_capsules": {
-            "num_caps": 80, 
+            "num_caps": 160, 
             "caps_dim": 36,
         },
     },
