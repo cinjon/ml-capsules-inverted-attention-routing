@@ -280,13 +280,44 @@ class PrimaryPointCapsLayer(nn.Module):
             output_tensor = torch.unsqueeze(output_tensor, 0)
         return output_tensor
 
+class LatentCapsLayer(nn.Module):
+    def __init__(self, latent_caps_size=16, prim_caps_size=1024, prim_vec_size=16, latent_vec_size=64):
+        super(LatentCapsLayer, self).__init__()
+        self.prim_vec_size = prim_vec_size
+        self.prim_caps_size = prim_caps_size
+        self.latent_caps_size = latent_caps_size
+        self.W = nn.Parameter(0.01*torch.randn(latent_caps_size, prim_caps_size, latent_vec_size, prim_vec_size))
+
+    def forward(self, x):
+        u_hat = torch.squeeze(torch.matmul(self.W, x[:, None, :, :, None]), dim=-1)
+        u_hat_detached = u_hat.detach()
+        b_ij = torch.zeros(x.size(0), self.latent_caps_size, self.prim_caps_size).to(x.device)
+        num_iterations = 3
+        for iteration in range(num_iterations):
+            c_ij = F.softmax(b_ij, 1)
+            if iteration == num_iterations - 1:
+                v_j = self.squash(torch.sum(c_ij[:, :, :, None] * u_hat, dim=-2, keepdim=True))
+            else:
+                v_j = self.squash(torch.sum(c_ij[:, :, :, None] * u_hat_detached, dim=-2, keepdim=True))
+                b_ij = b_ij + torch.sum(v_j * u_hat_detached, dim=-1)
+        return v_j.squeeze(-2)
+
+    def squash(self, input_tensor):
+        squared_norm = (input_tensor ** 2).sum(-1, keepdim=True)
+        output_tensor = squared_norm * input_tensor / \
+            ((1. + squared_norm) * torch.sqrt(squared_norm))
+        return output_tensor
+
 class NewBackboneModel(nn.Module):
     def __init__(self, params, args, out_channels=None):
         super(NewBackboneModel, self).__init__()
         backbone = params['backbone']
         self.prim_cap_size = backbone['prim_cap_size']
         self.prim_vec_size = backbone['prim_vec_size']
+        self.latent_caps_size = backbone['latent_caps_size'] # 64
+        self.latent_vec_size = backbone['latent_vec_size'] # 64
         self.num_points = backbone['num_points']
+
 
         if out_channels is None:
             self.out_channels = args.num_output_classes
@@ -295,14 +326,24 @@ class NewBackboneModel(nn.Module):
 
         self.presence_type = args.presence_type
         self.is_classifier = 'xent' in args.criterion
+        self.dynamic_routing = args.dynamic_routing
 
         self.conv_layer = ConvLayer()
         self.primary_point_caps_layer = PrimaryPointCapsLayer(
             self.prim_cap_size, self.prim_vec_size, self.num_points)
 
+        if self.dynamic_routing:
+            self.latent_caps_layer = LatentCapsLayer(
+                self.latent_caps_size, self.prim_cap_size,
+                self.prim_vec_size, self.latent_vec_size)
+
         if self.is_classifier:
-            self.fc_head = nn.Linear(
-                self.prim_cap_size * self.prim_vec_size, self.out_channels)
+            if self.dynamic_routing:
+                self.fc_head = nn.Linear(
+                    self.latent_caps_size * self.latent_vec_size, self.out_channels)
+            else:
+                self.fc_head = nn.Linear(
+                    self.prim_cap_size * self.prim_vec_size, self.out_channels)
 
     def forward(self, x, return_embedding=False):
         x = self.conv_layer(x)
@@ -311,7 +352,13 @@ class NewBackboneModel(nn.Module):
         if return_embedding:
             return x
 
+        # Dynamic routing
+        if self.dynamic_routing:
+            x = self.latent_caps_layer(x)
+
+
         presence = self.get_presence(x)
+
         if self.is_classifier:
             x = self.fc_head(x.view(x.size(0), -1))
             return x, presence
@@ -326,7 +373,10 @@ class NewBackboneModel(nn.Module):
 
 
 def get_xent_loss(model, points, labels):
-    output = model(points)
+    if isinstance(model.module, NewBackboneModel):
+        output, _ = model(points)
+    else:
+        output = model(points)
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
     accuracy = (predictions == labels).float().mean().item()

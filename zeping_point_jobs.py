@@ -586,6 +586,122 @@ def run(find_counter=None):
 
         return find_counter, job
 
+    # 35-38: NewBackboneModel xent
+    if find_counter in [35, 36, 37, 38]:
+        num_gpus = 1
+        time = 24
+        job = {
+            'name': '2020.06.23',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'xent',
+            'num_output_classes': 55,
+            'num_routing': 1,
+            'dataset': 'shapenetFull',
+            'num_frames': 1,
+            'batch_size': 32,
+            'optimizer': 'adam',
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 5,
+            'do_tsne_test_after': -1,
+            'weight_decay': 0,
+            'presence_type': None, # 'l2norm',
+            'epoch': 350,
+            'use_diff_object': True,
+            'shapenet_stepsize_range': '0,0',
+            'shapenet_rotation_test': '',
+            'use_scheduler': True,
+            'schedule_milestones': '10,30',
+            'lr': 3e-4,
+            'num_gpus': num_gpus
+        }
+
+        if find_counter == 35:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 0
+            })
+
+        if find_counter == 36:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 0
+            })
+
+        if find_counter == 37:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 5e-4
+            })
+
+        if find_counter == 38:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 5e-4
+            })
+
+        return find_counter, job
+
+    # 39-42: NewBackboneModel xent with dynamic routing
+    if find_counter in [39, 40, 41, 42]:
+        num_gpus = 1
+        time = 24
+        job = {
+            'name': '2020.06.23',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'xent',
+            'num_output_classes': 55,
+            'num_routing': 1,
+            'dataset': 'shapenetFull',
+            'num_frames': 1,
+            'batch_size': 8,
+            'optimizer': 'adam',
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 5,
+            'do_tsne_test_after': -1,
+            'presence_type': None, # 'l2norm',
+            'epoch': 350,
+            'use_diff_object': True,
+            'shapenet_stepsize_range': '0,0',
+            'shapenet_rotation_test': '',
+            'use_scheduler': True,
+            'schedule_milestones': '10,30',
+            'lr': 3e-4,
+            'num_gpus': num_gpus,
+            'dynamic_routing': True,
+        }
+
+        if find_counter == 39:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 0
+            })
+
+        if find_counter == 40:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 0
+            })
+
+        if find_counter == 41:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 5e-4
+            })
+
+        if find_counter == 42:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 5e-4
+            })
+
+
+
+        return find_counter, job
+
     else:
         print('Counter not found')
         return None, None

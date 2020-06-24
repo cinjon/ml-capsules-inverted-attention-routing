@@ -605,7 +605,7 @@ def main(gpu, args, port=12355, initialize=True):
     train_loader, test_loader = get_loaders(args, rank=gpu)
     num_frames = 3
 
-    linear_classifier_out = args.num_output_classes if args.criterion == 'xent' else None        
+    linear_classifier_out = args.num_output_classes if args.criterion == 'xent' else None
 
     print('==> Building model..')
     if 'backbone' in args.criterion:
@@ -614,8 +614,11 @@ def main(gpu, args, port=12355, initialize=True):
         elif 'resnet' in args.config:
             net = capsule_points_model.BackboneModel(config['params'], args)
     else:
-        net = capsule_points_model.CapsulePointsModel(
-            config['params'], args, linear_classifier_out)
+        if 'pointcapsnet' in args.config:
+            net = capsule_points_model.NewBackboneModel(config['params'], args)
+        elif 'resnet' in args.config:
+            net = capsule_points_model.CapsulePointsModel(
+                config['params'], args, linear_classifier_out)
     print(net)
 
     if args.optimizer == 'adam':
@@ -912,6 +915,10 @@ if __name__ == '__main__':
                         default='presence', # presence or pose.
                         type=str)
 
+    parser.add_argument('--dynamic_routing',
+                        action='store_true',
+                        help='whether to use dynamic routing in NewBackboneModel')
+
     # ModelNet
     parser.add_argument('--modelnet_root',
                         type=str,
@@ -1110,6 +1117,6 @@ if __name__ == '__main__':
                 base_dir, '2020.06.20/67/2020-06-20-13-30-25')
             args.resume_epoch = 12
             args.classifier_type = 'pose'
-            
+
     default_port = random.randint(10000, 19000)
     mp.spawn(main, nprocs=args.num_gpus, args=(args, default_port))
