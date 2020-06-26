@@ -536,7 +536,7 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                     s = '%s/scaled%d/C%d/balanced%d/dual0' % (
                         key, int(scaling_params), C, int(class_weight == 'balanced')                        
                     )
-                    s = 'For key %s, score of %.4f.' % (key, s)
+                    s = 'For key %s, score of %.4f.' % (s, score)
                     now = time.time()
                     s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
                     t = now
