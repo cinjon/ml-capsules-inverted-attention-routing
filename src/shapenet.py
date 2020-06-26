@@ -1,3 +1,4 @@
+from collections import defaultdict
 import math
 import os
 import random
@@ -114,10 +115,19 @@ class ShapeNet55(torch.utils.data.Dataset):
             self.npy_paths += [os.path.join(self.path, folder_name, npy_name) for npy_name in npy_names]
             self.lbls += [lbl_dict[folder_name], ] * len(npy_names)
 
+        if self.split == 'train':
+            lbl_count = defaultdict(int)
+            for lbl in self.lbls:
+                lbl_count[lbl] += 1
+            weights_per_class = {lbl: 1.*len(self.lbls)/count
+                                 for lbl, count in lbl_count.items()}
+            self.weights_per_index = [weights_per_class[lbl] for lbl in self.lbls]
+
         self.lbls = np.array(self.lbls)
         self.lbl_dict = {
             i: np.where(self.lbls == i)[0] for i in range(55)
         }
+        print('Sizes: ', len(self.lbls), len(self.npy_paths))
         if 'dataset5' in path:
             self.subset_count = 5
             self.lbls_used = [8, 9, 28, 31, 41]

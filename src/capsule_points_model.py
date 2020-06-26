@@ -14,8 +14,8 @@ import torch
 
 from src import layers_1d
 
-import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
-chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
+# import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
+# chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
 
 
 # Capsule model

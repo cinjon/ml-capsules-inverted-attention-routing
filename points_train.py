@@ -699,12 +699,12 @@ def main(gpu, args, port=12355, initialize=True):
     device = gpu
 
     if args.linpred_test_only:
-        print('\n***\nStarting LinPred Test on ModelNet (%d)\n***' % start_epoch)
-        linpred_train.run_ssl_modelnet(start_epoch, net, args, config, comet_exp)
-        print('\n***\nEnded LinPred Test on ModelNet (%d)\n***' % start_epoch)
         print('\n***\nStarting LinPred Test on ShapeNet (%d)\n***' % start_epoch)
         linpred_train.run_ssl_shapenet(start_epoch, net, args, config, comet_exp)
         print('\n***\nEnded LinPred Test on ShapeNet (%d)\n***' % start_epoch)
+        print('\n***\nStarting LinPred Test on ModelNet (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_modelnet(start_epoch, net, args, config, comet_exp)
+        print('\n***\nEnded LinPred Test on ModelNet (%d)\n***' % start_epoch)
 
         if args.counter in [62, 63, 66, 67]:
             if args.resume_epoch < 66:
@@ -816,6 +816,8 @@ if __name__ == '__main__':
                         help='use comet or not')
     parser.add_argument('--linpred_test_only', action='store_true',
                         help='whether to only do the linpred test and exit')
+    parser.add_argument('--linpred_test_class_balanced', action='store_true',
+                        help='whether we use class balanced sampling in linpred')
     parser.add_argument('--linpred_svm_only', action='store_true',
                         help='whether to only do the linpred test and exit')
     parser.add_argument('--do_tsne_test_every',
@@ -1007,6 +1009,7 @@ if __name__ == '__main__':
             args.classifier_type = 'pose'
         elif args.counter == 54:
             args.linpred_test_only = True
+            args.linpred_test_class_balanced = True
             args.num_gpus = 1
             base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
             args.resume_dir = os.path.join(

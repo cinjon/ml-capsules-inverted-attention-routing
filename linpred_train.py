@@ -257,13 +257,23 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
         use_diff_object=args.use_diff_object,
         rotation_range=rotation_test, rotation_same=rotation_same)
 
-    train_loader = torch.utils.data.DataLoader(dataset=train_set,
-                                               batch_size=args.linear_batch_size,
-                                               shuffle=True)
+    batch_size = args.linear_batch_size
+    if args.linpred_test_class_balanced:
+        sampler = torch.utils.data.sampler.WeightedRandomSampler(
+            train_set.weights_per_index, batch_size)            
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size,
+            sampler=sampler, num_workers=args.num_workers)
+    else:
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size, shuffle=True,
+            num_workers=args.num_workers
+        )
+                                                   
     # We do shuffle so taht we can test it before epoch starts.
-    test_loader = torch.utils.data.DataLoader(dataset=test_set,
-                                              batch_size=args.linear_batch_size,
-                                              shuffle=True)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set, batch_size=batch_size, shuffle=True,
+        num_workers=args.num_workers)
 
     net = capsule_points_model.CapsulePointsModel(
         config['params'], args, linear_classifier_out=args.num_output_classes)
@@ -289,7 +299,7 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
     print('Grad Params %d / All Params %d' % (grad_params, all_params))
 
     start_epoch = 1
-    total_epochs = 8
+    total_epochs = 50 if args.linpred_test_class_balanced else 10
 
     test_loss, test_acc = test_shapenet(0, net, test_loader)
     test_metrics = {
@@ -335,18 +345,24 @@ def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
     train_set = ModelNet(args.modelnet_root, train=True)
     test_set = ModelNet(args.modelnet_root, train=False)
 
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_set,
-        batch_size=args.linear_batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        drop_last=True)
+    batch_size = args.linear_batch_size
+    if args.linpred_test_class_balanced:
+        sampler = torch.utils.data.sampler.WeightedRandomSampler(
+            train_set.weights_per_index, batch_size)            
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size, 
+            sampler=sampler, num_workers=args.num_workers)
+    else:
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size, shuffle=True,
+            num_workers=args.num_workers
+        )
+
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
-        batch_size=args.linear_batch_size,
+        batch_size=batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
-        drop_last=True)
+        num_workers=args.num_workers)
 
     net = capsule_points_model.CapsulePointsModel(
         config['params'], args, linear_classifier_out=40)
@@ -369,7 +385,7 @@ def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
     print('Done Loading...')
 
     start_epoch = 1
-    total_epochs = 8
+    total_epochs = 50 if args.linpred_test_class_balanced else 10
 
     test_loss, test_acc = test_shapenet(0, net, test_loader)
     test_metrics = {
@@ -512,22 +528,20 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                 train_x = train_x / np.linalg.norm(train_x, axis=1)[:, None] 
             for C in [1., 0.5, 2]:
                 for class_weight in [None, 'balanced']:
-                    for dual in [True, False]:
-                        clf = LinearSVC(random_state=0, tol=1e-5, C=C,
-                                        class_weight=class_weight, dual=dual)
-                        clf.fit(train_x, train_y)
-                        # predictions = clf.predict(test_x)
-                        score = clf.score(test_x, test_y)
-                        key = '%s/scaled%d/C%d/balanced%d/dual%d' % (
-                            key, int(scaling_params), C,
-                            int(class_weight == 'balanced'), int(dual)
-                        )
-                        s = 'For key %s, score of %.4f.' % (key, score)
-                        now = time.time()
-                        s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
-                        t = now
-                        print(s)
-                        comet_exp.log_metrics({key: score})
+                    clf = LinearSVC(random_state=0, tol=1e-5, C=C,
+                                    class_weight=class_weight, dual=False)
+                    clf.fit(train_x, train_y)
+                    # predictions = clf.predict(test_x)
+                    score = clf.score(test_x, test_y)
+                    s = '%s/scaled%d/C%d/balanced%d/dual0' % (
+                        key, int(scaling_params), C, int(class_weight == 'balanced')                        
+                    )
+                    s = 'For key %s, score of %.4f.' % (key, s)
+                    now = time.time()
+                    s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
+                    t = now
+                    print(s)
+                    comet_exp.log_metrics({key: score})
 
 
 def get_mnist_loss(model, images, labels):
