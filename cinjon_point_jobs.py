@@ -1080,7 +1080,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1122,9 +1122,58 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 86. Random test for each of these models, i.e. what does *just*
+    # a linear on top get? That would be bad if that gets the same number. It
+    # would suggest a bug.
+    job = {
+        'name': '2020.06.24',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 16,
+        'dataset': 'shapenetFull',
+        'batch_size': 1,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'epoch': 25,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1,
+        'linpred_test_only': True
+    }
+    num_gpus = 1
+    time = 4
+    var_arrays = {
+        'config': [
+            'resnet_backbone_points55_smbone3_gap',
+            # None of the next 3 actually worked...
+            'resnet_backbone_points55_smbone31_gap',
+            'resnet_backbone_points55_smbone32_gap',
+            'resnet_backbone_points55_smbone33_gap',
+            # 'resnet_backbone_points55_smbone34_gap'
+        ],
+        'classifier_type': ['presence', 'pose'],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
+
 
 if __name__ == '__main__':
     run()

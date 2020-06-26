@@ -699,12 +699,12 @@ def main(gpu, args, port=12355, initialize=True):
     device = gpu
 
     if args.linpred_test_only:
-        print('\n***\nStarting LinPred Test on ShapeNet (%d)\n***' % start_epoch)
-        linpred_train.run_ssl_shapenet(start_epoch, net, args, config, comet_exp)
-        print('\n***\nEnded LinPred Test on ShapeNet (%d)\n***' % start_epoch)
         print('\n***\nStarting LinPred Test on ModelNet (%d)\n***' % start_epoch)
         linpred_train.run_ssl_modelnet(start_epoch, net, args, config, comet_exp)
         print('\n***\nEnded LinPred Test on ModelNet (%d)\n***' % start_epoch)
+        print('\n***\nStarting LinPred Test on ShapeNet (%d)\n***' % start_epoch)
+        linpred_train.run_ssl_shapenet(start_epoch, net, args, config, comet_exp)
+        print('\n***\nEnded LinPred Test on ShapeNet (%d)\n***' % start_epoch)
 
         if args.counter in [62, 63, 66, 67]:
             if args.resume_epoch < 66:
