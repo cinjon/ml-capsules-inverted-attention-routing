@@ -5,6 +5,7 @@ python linpred_train.py --criterion xent --resume_dir /.../resnick/vidcaps/resul
 --debug --data_root /.../resnick/vidcaps --batch_size 32 --num_routing 1
 --dataset affnist --test_only --debug --checkpoint_epoch 2 --config resnet_backbone_mnist
 """
+from collections import defaultdict
 import copy
 import os
 import json
@@ -16,6 +17,7 @@ import argparse
 import numpy as np
 from datetime import datetime
 
+from sklearn.svm import LinearSVC
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -408,6 +410,124 @@ def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
                 comet_exp.log_metrics(test_metrics, step=epoch)
 
         print('Epoch %d:\n\t%s\n\t%s' % (epoch, loss_str, acc_str))
+
+
+def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
+    stepsize_range = [float(k) for k in args.shapenet_stepsize_range.split(',')]
+    stepsize_fixed = args.shapenet_stepsize_fixed
+    if args.shapenet_rotation_train:
+        rotation_train = [float(k) for k in args.shapenet_rotation_train.split(',')]
+    else:
+        rotation_train = None
+    if args.shapenet_rotation_test:
+        rotation_test = [float(k) for k in args.shapenet_rotation_test.split(',')]
+    else:
+        rotation_test = None
+
+    rotation_same = args.shapenet_rotation_same
+    root = os.path.join(args.data_root, args.dataset.replace('shapenet', 'dataset'))
+    train_set = ShapeNet55(
+        root, split='train', num_frames=1,
+        stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+        use_diff_object=args.use_diff_object,
+        rotation_range=rotation_train, rotation_same=rotation_same)
+    test_set = ShapeNet55(
+        root, split='val', num_frames=1,
+        stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
+        use_diff_object=args.use_diff_object,
+        rotation_range=rotation_test, rotation_same=rotation_same)
+
+    train_loader = torch.utils.data.DataLoader(dataset=train_set,
+                                               batch_size=args.linear_batch_size,
+                                               shuffle=True)
+    test_loader = torch.utils.data.DataLoader(dataset=test_set,
+                                              batch_size=args.linear_batch_size,
+                                              shuffle=True)
+
+    all_params = sum(p.numel() for p in model.parameters())
+    print('All Params %d' % (all_params))
+
+    device = 'cuda'
+    model.to(device)
+    model.eval()
+
+    pose_d = defaultdict(list)
+    presence_d = defaultdict(list)
+    labels_d = defaultdict(list)
+    start_t = time.time()
+    t = start_t
+    print('Gathering data...')
+    with torch.no_grad():
+        for split, loader in zip(['train', 'test'], [train_loader, test_loader]):
+            for batch_idx, (points, labels) in enumerate(loader):
+                points = points.to(device)
+                batch_size, num_points = points.shape[:2]
+                # Change view so that we can put everything through the model at once.
+                points = points.view(batch_size * num_points, *points.shape[2:])
+                pose, presence = model(points)
+                labels = labels.squeeze()
+                pose = pose.reshape(batch_size*num_points, -1)
+                
+                pose = pose.cpu()
+                presence = presence.cpu()
+                labels = labels.cpu()
+                pose_d[split].append(pose)
+                presence_d[split].append(presence)
+                labels_d[split].append(labels)
+                if batch_idx % 10 == 0:
+                    new_t = time.time()
+                    print('Did batch %d / %d (%d / %d), %.4f / %.4f' % (
+                        batch_idx, len(loader), len(pose), len(pose_d[split]),
+                        new_t - t, new_t - start_t                        
+                    ))
+                    t = new_t
+                    # break
+
+    train_poses = np.concatenate(pose_d['train'])
+    train_presences = np.concatenate(presence_d['train'])
+    train_labels = np.concatenate(labels_d['train'])
+    test_poses = np.concatenate(pose_d['test'])
+    test_presences = np.concatenate(presence_d['test'])
+    test_labels = np.concatenate(labels_d['test'])
+    print('Got test data: ', test_labels.shape, test_presences.shape, test_poses.shape)
+    print('Got train data: ', train_labels.shape, train_presences.shape, train_poses.shape)
+    del labels_d
+    del presence_d
+    del pose_d
+
+    start_t = time.time()
+    t = start_t
+    for key, train_data, test_data in zip(
+            ['pose', 'presence'],
+            [[train_poses, train_labels], [train_presences, train_labels]],
+            [[test_poses, test_labels], [test_presences, test_labels]]
+    ):
+        train_x, train_y = train_data
+        test_x, test_y = test_data
+
+        for scaling_params in [False, True]:
+            if scaling_params:
+                # We scale each example in both train and test to be unit norm.
+                test_x = test_x / np.linalg.norm(test_x, axis=1)[:, None]
+                train_x = train_x / np.linalg.norm(train_x, axis=1)[:, None] 
+            for C in [1., 0.5, 2]:
+                for class_weight in [None, 'balanced']:
+                    for dual in [True, False]:
+                        clf = LinearSVC(random_state=0, tol=1e-5, C=C,
+                                        class_weight=class_weight, dual=dual)
+                        clf.fit(train_x, train_y)
+                        # predictions = clf.predict(test_x)
+                        score = clf.score(test_x, test_y)
+                        key = '%s/scaled%d/C%d/balanced%d/dual%d' % (
+                            key, int(scaling_params), C,
+                            int(class_weight == 'balanced'), int(dual)
+                        )
+                        s = 'For key %s, score of %.4f.' % (key, score)
+                        now = time.time()
+                        s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
+                        t = now
+                        print(s)
+                        comet_exp.log_metrics({key: score})
 
 
 def get_mnist_loss(model, images, labels):
