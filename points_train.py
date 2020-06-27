@@ -66,7 +66,10 @@ def run_tsne(model, path, epoch, args, comet_exp, num_classes):
 
                 # Change view so that we can put everything through the model at once.
                 points = points.view(batch_size * num_points, *points.shape[2:])
-                poses, presences = model(points)
+                if args.criterion == 'autoencoder':
+                    poses, presences = model(points, get_code=True)
+                else:
+                    poses, presences = model(points)
                 poses = poses.view(batch_size, num_points, *poses.shape[1:])
                 presences = presences.view(batch_size, num_points,
                                            *presences.shape[1:])
@@ -443,6 +446,20 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
             extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                  for k, v in averages.items() \
                                  if 'capsule_prob' not in k])
+        elif criterion == 'autoencoder':
+            points = points[:, 0]
+            points = points.cuda(device)
+            labels = labels.squeeze()
+            labels = labels.cuda(device)
+            loss, stats = capsule_points_model.get_autoencoder_loss(
+                net, points, labels, args)
+            for key, value in stats.items():
+                if key not in averages:
+                    averages[key] = Averager()
+                averages[key].add(value)
+            extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                 for k, v in averages.items() \
+                                 if 'capsule_prob' not in k])
 
         loss.backward()
 
@@ -560,6 +577,21 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                 extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
                                      for k, v in averages.items() \
                                      if 'capsule_prob' not in k])
+            elif criterion == 'autoencoder':
+                points = points[:, 0]
+                points = points.cuda(device)
+                labels = labels.squeeze()
+                labels = labels.cuda(device)
+                loss, stats = capsule_points_model.get_autoencoder_loss(
+                    net, points, labels, args)
+                averages['loss'].add(loss.item())
+                for key, value in stats.items():
+                    if key not in averages:
+                        averages[key] = Averager()
+                    averages[key].add(value)
+                extra_s = ', '.join(['{}: {:.5f}.'.format(k, v.item())
+                                     for k, v in averages.items() \
+                                     if 'capsule_prob' not in k])
 
             if batch_idx % 100 == 0 and batch_idx > 0:
                 log_text = ('Val Epoch {} {}/{} {:.3f}s | Loss: {:.5f} | ' + extra_s)
@@ -613,6 +645,8 @@ def main(gpu, args, port=12355, initialize=True):
             net = capsule_points_model.NewBackboneModel(config['params'], args)
         elif 'resnet' in args.config:
             net = capsule_points_model.BackboneModel(config['params'], args)
+    elif args.criterion == 'autoencoder':
+        net = capsule_points_model.PointCapsNet(config['params'], args)
     else:
         if 'pointcapsnet' in args.config:
             net = capsule_points_model.NewBackboneModel(config['params'], args)
@@ -768,6 +802,13 @@ def main(gpu, args, port=12355, initialize=True):
             comet_exp.log_epoch_end(epoch)
 
         if all([
+            epoch % args.do_svm_shapenet_every == 0,
+            epoch > args.do_svm_shapenet_after,
+        ]):
+            print('\n***\nStarting SVM ShapeNet Test (%d)\n***' % epoch)
+            linpred_train.run_svm_shapenet(epoch, net, args, config, comet_exp)
+
+        if all([
                 gpu == 0,
                 args.do_tsne_test_every is not None,
                 epoch % args.do_tsne_test_every == 0,
@@ -789,6 +830,13 @@ def main(gpu, args, port=12355, initialize=True):
         ]):
             print('\n***\nStarting ModelNet Test (%d)\n***' % epoch)
             run_modelnet_test(args, config, net, device, epoch, comet_exp=comet_exp)
+
+        # if all([
+        #     epoch % args.do_svm_shapenet_every == 0,
+        #     epoch > args.do_svm_shapenet_after,
+        # ]):
+        #     print('\n***\nStarting SVM ShapeNet Test (%d)\n***' % epoch)
+        #     linpred_train.run_svm_shapenet(epoch, net, args, config, comet_exp)
 
 
 if __name__ == '__main__':
@@ -945,6 +993,17 @@ if __name__ == '__main__':
     parser.add_argument('--modelnet_test_epoch',
                         default=10, type=int,
                         help='ModelNet test epoch number')
+
+    # SVM
+    parser.add_argument('--do_svm_shapenet_every',
+                        default=25, type=int,
+                        help='if an integer > 0, then do the svm shapenet test ' \
+                        'every this many epochs.')
+    parser.add_argument('--do_svm_shapenet_after',
+                        default=199, type=int,
+                        help='if an integer > 0, then do the svm shapenet test ' \
+                        'starting at this epoch.')
+
 
     args = parser.parse_args()
     if args.mode == 'jobarray':

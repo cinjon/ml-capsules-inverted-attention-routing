@@ -14,8 +14,8 @@ import torch
 
 from src import layers_1d
 
-# import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
-# chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
+import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
+chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
 
 
 # Capsule model
@@ -414,7 +414,7 @@ class NewBackboneModel(nn.Module):
             return final_pose.norm(dim=2)
 
 class PointCapsNet(nn.Module):
-    def __init__(self, params, args=None):
+    def __init__(self, params, args):
         super(PointCapsNet, self).__init__()
         backbone = params['backbone']
         self.prim_caps_size = backbone['prim_caps_size']
@@ -422,6 +422,8 @@ class PointCapsNet(nn.Module):
         self.latent_caps_size = backbone['latent_caps_size']
         self.latent_vec_size = backbone['latent_vec_size']
         self.num_points = backbone['num_points']
+
+        self.presence_type = args.presence_type
 
         self.conv_layer = ConvLayer()
         self.primary_point_caps_layer = PrimaryPointCapsLayer(
@@ -432,13 +434,24 @@ class PointCapsNet(nn.Module):
         self.caps_decoder = CapsDecoder(
             self.latent_caps_size, self.latent_vec_size, self.num_points)
 
-    def forward(self, x):
+    def forward(self, x, get_code=False):
         x = self.conv_layer(x)
 
         x = self.primary_point_caps_layer(x)
         x = self.latent_caps_layer(x)
-        reconstructions = self.caps_decoder(x)
-        return x, reconstructions
+
+        if get_code:
+            presence = self.get_presence(x)
+            return x, presence
+        else:
+            reconstructions = self.caps_decoder(x)
+            return x, reconstructions
+
+    def get_presence(self, code):
+        if not self.presence_type:
+            return None
+        elif self.presence_type == 'l2norm':
+            return code.norm(dim=2)
 
     def loss(self, data, reconstructions):
          return self.reconstruction_loss(data, reconstructions)
@@ -449,6 +462,55 @@ class PointCapsNet(nn.Module):
         dist1, dist2, _, _ = chamfer_dist(data, reconstructions)
         loss = (torch.mean(dist1)) + (torch.mean(dist2))
         return loss
+
+class PointCapsEncoder(nn.Module):
+    def __init__(self, params, args, out_channels):
+        super(PointCapsEncoder, self).__init__()
+        backbone = params['backbone']
+        self.prim_caps_size = backbone['prim_caps_size']
+        self.prim_vec_size = backbone['prim_vec_size']
+        self.latent_caps_size = backbone['latent_caps_size']
+        self.latent_vec_size = backbone['latent_vec_size']
+        self.num_points = backbone['num_points']
+        self.out_channels = out_channels
+
+        self.presence_type = args.presence_type
+
+        self.conv_layer = ConvLayer()
+        self.primary_point_caps_layer = PrimaryPointCapsLayer(
+            self.prim_caps_size, self.prim_vec_size, self.num_points)
+        self.latent_caps_layer = LatentCapsLayer(
+            self.latent_caps_size, self.prim_caps_size,
+            self.prim_vec_size, self.latent_vec_size)
+
+        self.fc_head = nn.Linear(
+            self.latent_caps_size * self.latent_vec_size, self.out_channels)
+
+    def forward(self, x, return_embedding=False):
+        x = self.conv_layer(x)
+        x = self.primary_point_caps_layer(x)
+
+        if return_embedding:
+            return x
+
+        # Dynamic routing
+        if self.dynamic_routing:
+            x = self.latent_caps_layer(x)
+
+
+        presence = self.get_presence(x)
+
+        if self.is_classifier:
+            x = self.fc_head(x.view(x.size(0), -1))
+            return x, presence
+        else:
+            return x, presence
+
+    def get_presence(self, final_pose):
+        if not self.presence_type:
+            return None
+        elif self.presence_type == 'l2norm':
+            return final_pose.norm(dim=2)
 
 
 def get_xent_loss(model, points, labels):
@@ -475,6 +537,16 @@ def get_backbone_test_loss(model, images, labels, args):
         'accuracy': accuracy,
     }
     return loss, stats
+
+def get_autoencoder_loss(model, images, labels, args):
+    codewords, reconstructions = model(images)
+    codewords = codewords.transpose(2, 1).contiguous()
+    reconstructions = reconstructions.transpose(2, 1).contiguous()
+    dist1, dist2, _, _ = chamfer_dist(codewords, reconstructions)
+    loss = (torch.mean(dist1)) + (torch.mean(dist2))
+    stats = {}
+    return loss, stats
+
 
 
 def do_simclr_nce(temperature, probs=None, anchor=None, other=None,

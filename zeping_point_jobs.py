@@ -698,6 +698,67 @@ def run(find_counter=None):
                 'weight_decay': 5e-4
             })
 
+        return find_counter, job
+
+    # 43: 3D point capsules network
+    if find_counter in [43, 44, 45, 46]:
+        num_gpus = 1
+        time = 24
+        job = {
+            'name': '2020.06.26',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'autoencoder',
+            'num_output_classes': 55,
+            # 'num_routing': 1,
+            'dataset': 'shapenetFull',
+            'num_frames': 1,
+            'batch_size': 8,
+            'optimizer': 'adam',
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/shapenet',
+            'do_tsne_test_every': 5,
+            'do_tsne_test_after': -1,
+            'presence_type': 'l2norm',
+            'epoch': 350,
+            # 'use_diff_object': True,
+            'shapenet_stepsize_range': '0,0',
+            # 'shapenet_rotation_train': '',
+            'shapenet_rotation_test': '',
+            'use_scheduler': True,
+            'schedule_milestones': '10,30',
+            'lr': 3e-4,
+            'num_gpus': num_gpus,
+            # 'dynamic_routing': True,
+            'do_svm_shapenet_every': 1,
+            'do_svm_shapenet_after': 5,
+            'linear_batch_size': 16,
+        }
+
+        if find_counter == 43:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 0
+            })
+
+        if find_counter == 44:
+            job.update({
+                'shapenet_rotation_train': '',
+                'weight_decay': 5e-4
+            })
+
+        if find_counter == 45:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 0
+            })
+
+        if find_counter == 46:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'weight_decay': 5e-4
+            })
+
 
 
         return find_counter, job

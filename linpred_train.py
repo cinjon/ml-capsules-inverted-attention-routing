@@ -110,7 +110,7 @@ def run_ssl_model(ssl_epoch, model, mnist_root, affnist_root, comet_exp, batch_s
                              one_data_loop=True,
                              center_discrete_count=5, center_discrete=center_discrete,
                              mnist_padding=mnist_padding, mnist_padding_count=mnist_padding_count
-    )                             
+    )
     test_set = MovingMNist2(mnist_root, train=False, seq_len=1, image_size=image_size,
                             colored=colored, tiny=False, num_digits=1,
                             center_start=False, step_length=step_length,
@@ -260,7 +260,7 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
     batch_size = args.linear_batch_size
     if args.linpred_test_class_balanced:
         sampler = torch.utils.data.sampler.WeightedRandomSampler(
-            train_set.weights_per_index, batch_size)            
+            train_set.weights_per_index, batch_size)
         train_loader = torch.utils.data.DataLoader(
             dataset=train_set, batch_size=batch_size,
             sampler=sampler, num_workers=args.num_workers)
@@ -269,7 +269,7 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
             dataset=train_set, batch_size=batch_size, shuffle=True,
             num_workers=args.num_workers
         )
-                                                   
+
     # We do shuffle so taht we can test it before epoch starts.
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set, batch_size=batch_size, shuffle=True,
@@ -348,9 +348,9 @@ def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
     batch_size = args.linear_batch_size
     if args.linpred_test_class_balanced:
         sampler = torch.utils.data.sampler.WeightedRandomSampler(
-            train_set.weights_per_index, batch_size)            
+            train_set.weights_per_index, batch_size)
         train_loader = torch.utils.data.DataLoader(
-            dataset=train_set, batch_size=batch_size, 
+            dataset=train_set, batch_size=batch_size,
             sampler=sampler, num_workers=args.num_workers)
     else:
         train_loader = torch.utils.data.DataLoader(
@@ -480,10 +480,13 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                 batch_size, num_points = points.shape[:2]
                 # Change view so that we can put everything through the model at once.
                 points = points.view(batch_size * num_points, *points.shape[2:])
-                pose, presence = model(points)
+                if args.criterion == 'autoencoder':
+                    pose, presence = model(points, get_code=True)
+                else:
+                    pose, presence = model(points)
                 labels = labels.squeeze()
                 pose = pose.reshape(batch_size*num_points, -1)
-                
+
                 pose = pose.cpu()
                 presence = presence.cpu()
                 labels = labels.cpu()
@@ -494,7 +497,7 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                     new_t = time.time()
                     print('Did batch %d / %d (%d / %d), %.4f / %.4f' % (
                         batch_idx, len(loader), len(pose), len(pose_d[split]),
-                        new_t - t, new_t - start_t                        
+                        new_t - t, new_t - start_t
                     ))
                     t = new_t
                     # break
@@ -525,7 +528,7 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
             if scaling_params:
                 # We scale each example in both train and test to be unit norm.
                 test_x = test_x / np.linalg.norm(test_x, axis=1)[:, None]
-                train_x = train_x / np.linalg.norm(train_x, axis=1)[:, None] 
+                train_x = train_x / np.linalg.norm(train_x, axis=1)[:, None]
             for C in [1., 0.5, 2]:
                 for class_weight in [None, 'balanced']:
                     clf = LinearSVC(random_state=0, tol=1e-5, C=C,
@@ -534,7 +537,7 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                     # predictions = clf.predict(test_x)
                     score = clf.score(test_x, test_y)
                     s = '%s/scaled%d/C%d/balanced%d/dual0' % (
-                        key, int(scaling_params), C, int(class_weight == 'balanced')                        
+                        key, int(scaling_params), C, int(class_weight == 'balanced')
                     )
                     s = 'For key %s, score of %.4f.' % (s, score)
                     now = time.time()
