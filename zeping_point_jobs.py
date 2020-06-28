@@ -701,11 +701,11 @@ def run(find_counter=None):
         return find_counter, job
 
     # 43: 3D point capsules network
-    if find_counter in [43, 44, 45, 46]:
+    if find_counter in [43, 44, 45, 46, 47, 48]:
         num_gpus = 1
         time = 24
         job = {
-            'name': '2020.06.26',
+            'name': '2020.06.28',
             'counter': find_counter,
             'config': 'pointcapsnet_backbone_points5_cap16',
             'criterion': 'autoencoder',
@@ -757,6 +757,18 @@ def run(find_counter=None):
             job.update({
                 'shapenet_rotation_train': '-90,90',
                 'weight_decay': 5e-4
+            })
+
+        if find_counter == 47:
+            job.update({
+                'shapenet_rotation_train': '',
+                'lr': 1e-4
+            })
+
+        if find_counter == 48:
+            job.update({
+                'shapenet_rotation_train': '-90,90',
+                'lr': 1e-4
             })
 
 

@@ -30,7 +30,7 @@ import configs
 import cinjon_point_jobs as cinjon_jobs
 import linpred_train
 import zeping_point_jobs as zeping_jobs
-from src import capsule_points_model
+from src import capsule_points_model, capsule_ae
 from src.shapenet import ShapeNet55
 from src.modelnet import ModelNet
 
@@ -150,7 +150,7 @@ def count_parameters(model):
 
 def run_modelnet_test(args, config, net, device, current_epoch, comet_exp=None):
     if 'pointcapsnet' in args.config:
-        modelnet_net = capsule_points_model.NewBackboneModel(config['params'], args, out_channels=40)
+        modelnet_net = capsule_ae.NewBackboneModel(config['params'], args, out_channels=40)
     elif 'resnet' in args.config:
         modelnet_net = capsule_points_model.BackboneModel(config['params'], args, out_channels=40)
     modelnet_net = modelnet_net.cuda()
@@ -451,8 +451,9 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
             points = points.cuda(device)
             labels = labels.squeeze()
             labels = labels.cuda(device)
-            loss, stats = capsule_points_model.get_autoencoder_loss(
+            loss, stats = capsule_ae.get_autoencoder_loss(
                 net, points, labels, args)
+            averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:
                     averages[key] = Averager()
@@ -582,7 +583,7 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
                 points = points.cuda(device)
                 labels = labels.squeeze()
                 labels = labels.cuda(device)
-                loss, stats = capsule_points_model.get_autoencoder_loss(
+                loss, stats = capsule_ae.get_autoencoder_loss(
                     net, points, labels, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
@@ -642,14 +643,14 @@ def main(gpu, args, port=12355, initialize=True):
     print('==> Building model..')
     if 'backbone' in args.criterion:
         if 'pointcapsnet' in args.config:
-            net = capsule_points_model.NewBackboneModel(config['params'], args)
+            net = capsule_ae.NewBackboneModel(config['params'], args)
         elif 'resnet' in args.config:
             net = capsule_points_model.BackboneModel(config['params'], args)
     elif args.criterion == 'autoencoder':
-        net = capsule_points_model.PointCapsNet(config['params'], args)
+        net = capsule_ae.PointCapsNet(config['params'], args)
     else:
         if 'pointcapsnet' in args.config:
-            net = capsule_points_model.NewBackboneModel(config['params'], args)
+            net = capsule_ae.NewBackboneModel(config['params'], args)
         elif 'resnet' in args.config:
             net = capsule_points_model.CapsulePointsModel(
                 config['params'], args, linear_classifier_out)
