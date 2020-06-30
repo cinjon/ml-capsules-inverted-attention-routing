@@ -1134,7 +1134,7 @@ def run(find_counter=None):
         'name': '2020.06.24',
         'criterion': 'xent',
         'num_output_classes': 55,
-        'num_routing': 16,
+        'num_routing': 16, # <-- Lolllllll.
         'dataset': 'shapenetFull',
         'batch_size': 1,
         'optimizer': 'adam',
@@ -1170,7 +1170,169 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 94. Random test redo for each of the models w appropraite routing.
+    job = {
+        'name': '2020.06.30',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'batch_size': 4,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'epoch': 25,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1,
+        'linpred_test_only': True
+    }
+    num_gpus = 1
+    time = 8
+    var_arrays = {
+        'config': [
+            'resnet_backbone_points55_smbone3_gap',
+        ],
+        'num_routing': [1, 2],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 96. Redo xent with new dataset.
+    job = {
+        'name': '2020.06.30',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFullMix',
+        'batch_size': 22,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'epoch': 25,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1,
+    }
+    num_gpus = 1
+    time = 4
+    var_arrays = {
+        'config': [
+            'resnet_backbone_points55_smbone3_gap',
+            'resnet_backbone_points55_smbone31_gap',
+            'resnet_backbone_points55_smbone32_gap',
+            'resnet_backbone_points55_smbone33_gap',
+        ],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+    # Counter: 100. Redo xent with newdataset with num_routing=2.
+    job = {
+        'name': '2020.06.30',
+        'criterion': 'xent',
+        'num_output_classes': 55,
+        'num_routing': 2,
+        'dataset': 'shapenetFullMix',
+        'batch_size': 10,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': 300,
+        'weight_decay': 0,
+        'epoch': 25,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1,
+    }
+    num_gpus = 1
+    time = 8
+    var_arrays = {
+        'config': [
+            'resnet_backbone_points55_smbone3_gap',
+            'resnet_backbone_points55_smbone31_gap',
+            'resnet_backbone_points55_smbone32_gap',
+            'resnet_backbone_points55_smbone33_gap',
+        ],
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 104. Autoencoder test with the 80/20/0 data.
+    job = {
+        'name': '2020.06.30',
+        'criterion': 'autoencoder',
+        'config': 'pointcapsnet_backbone_points5_cap16',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFullMix',
+        'batch_size': 8,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'epoch': 50,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'nce_presence_temperature': 0.1,
+        'lr': 3e-4,
+        'num_frames': 1,
+        'do_svm_shapenet_every': 1,
+        'do_svm_shapenet_after': 5,
+        'linear_batch_size': 16,
+    }
+    num_gpus = 1
+    time = 8
+    var_arrays = {}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
