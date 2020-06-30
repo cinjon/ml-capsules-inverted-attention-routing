@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
 
 class ConvLayer(nn.Module):
     def __init__(self):
@@ -168,9 +167,7 @@ class NewBackboneModel(nn.Module):
 
         if self.is_classifier:
             x = self.fc_head(x.view(x.size(0), -1))
-            return x, presence
-        else:
-            return x, presence
+        return x, presence
 
     def get_presence(self, final_pose):
         if not self.presence_type:
@@ -230,6 +227,7 @@ class PointCapsNet(nn.Module):
 
 
 def get_autoencoder_loss(model, images, labels, args):
+    import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
     chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
     _, reconstructions = model(images)
     images = images.transpose(2, 1).contiguous()
@@ -242,4 +240,16 @@ def get_autoencoder_loss(model, images, labels, args):
     stats = {
         'dist1_mean': dist1_mean.item(),
         'dist2_mean': dist2_mean.item()}
+    return loss, stats
+
+
+def get_xent_loss(model, points, labels):
+    # Assumes that it's the NewBackboneModel
+    output, _ = model(points)
+    loss = F.cross_entropy(output, labels)
+    predictions = torch.argmax(output, dim=1)
+    accuracy = (predictions == labels).float().mean().item()
+    stats = {
+        'accuracy': accuracy,
+    }
     return loss, stats
