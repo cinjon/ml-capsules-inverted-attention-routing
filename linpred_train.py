@@ -299,7 +299,7 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
     print('Grad Params %d / All Params %d' % (grad_params, all_params))
 
     start_epoch = 1
-    total_epochs = 50 if args.linpred_test_class_balanced else 10
+    total_epochs = 150 if args.linpred_test_class_balanced else 10
 
     test_loss, test_acc = test_shapenet(0, net, test_loader)
     test_metrics = {
@@ -385,7 +385,7 @@ def run_ssl_modelnet(ssl_epoch, model, args, config, comet_exp=None):
     print('Done Loading...')
 
     start_epoch = 1
-    total_epochs = 50 if args.linpred_test_class_balanced else 10
+    total_epochs = 100 if args.linpred_test_class_balanced else 10
 
     test_loss, test_acc = test_shapenet(0, net, test_loader)
     test_metrics = {

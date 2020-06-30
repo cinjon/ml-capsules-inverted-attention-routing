@@ -238,10 +238,8 @@ class BackboneModel(nn.Module):
 
 
 def get_xent_loss(model, points, labels):
-    if isinstance(model.module, NewBackboneModel):
-        output, _ = model(points)
-    else:
-        output = model(points)
+    # Assumes that it's not the NewBackboneModel
+    output = model(points)
     loss = F.cross_entropy(output, labels)
     predictions = torch.argmax(output, dim=1)
     accuracy = (predictions == labels).float().mean().item()

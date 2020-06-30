@@ -1077,8 +1077,9 @@ if __name__ == '__main__':
             args.resume_epoch = 42
             args.classifier_type = 'pose'
         elif args.counter == 55:
-            # args.linpred_test_only = True
-            args.linpred_svm_only = True
+            args.linpred_test_only = True
+            args.linpred_test_class_balanced = True
+            # args.linpred_svm_only = True
             args.num_gpus = 1
             base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
             args.resume_dir = os.path.join(
