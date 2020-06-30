@@ -216,7 +216,7 @@ class PointCapsNet(nn.Module):
             return code.norm(dim=2)
 
     def loss(self, data, reconstructions):
-         return self.reconstruction_loss(data, reconstructions)
+        return self.reconstruction_loss(data, reconstructions)
 
     def reconstruction_loss(self, data, reconstructions):
         data = data.transpose(2, 1).contiguous()
@@ -226,7 +226,7 @@ class PointCapsNet(nn.Module):
         return loss
 
 
-def get_autoencoder_loss(model, images, labels, args):
+def get_autoencoder_loss(model, images, args):
     import src.chamfer3D.dist_chamfer_3D as dist_chamfer_3D
     chamfer_dist = dist_chamfer_3D.chamfer_3DDist()
     _, reconstructions = model(images)

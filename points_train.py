@@ -32,6 +32,7 @@ import linpred_train
 import zeping_point_jobs as zeping_jobs
 from src import capsule_points_model, capsule_ae
 from src.shapenet import ShapeNet55
+# from src.shapenet_original_dataset import Shapenet55Dataset
 from src.modelnet import ModelNet
 
 
@@ -449,10 +450,8 @@ def train(epoch, step, net, optimizer, loader, args, device, comet_exp=None):
         elif criterion == 'autoencoder':
             points = points[:, 0]
             points = points.cuda(device)
-            labels = labels.squeeze()
-            labels = labels.cuda(device)
             loss, stats = capsule_ae.get_autoencoder_loss(
-                net, points, labels, args)
+                net, points, args)
             averages['loss'].add(loss.item())
             for key, value in stats.items():
                 if key not in averages:

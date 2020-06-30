@@ -104,55 +104,66 @@ class ShapeNet55(torch.utils.data.Dataset):
         if self.stepsize_fixed is None:
             assert len(self.stepsize_range) == 2
 
-        assert self.split in ['train', 'test', 'val']
-        self.path = os.path.join(self.path, self.split)
-
-        self.npy_paths = []
-        self.lbls = []
-        folder_names = os.listdir(self.path)
-        for folder_name in folder_names:
-            npy_names = os.listdir(os.path.join(self.path, folder_name))
-            self.npy_paths += [os.path.join(self.path, folder_name, npy_name) for npy_name in npy_names]
-            self.lbls += [lbl_dict[folder_name], ] * len(npy_names)
-
-        if self.split == 'train':
-            lbl_count = defaultdict(int)
-            for lbl in self.lbls:
-                lbl_count[lbl] += 1
-            weights_per_class = {lbl: 1.*len(self.lbls)/count
-                                 for lbl, count in lbl_count.items()}
-            self.weights_per_index = [weights_per_class[lbl] for lbl in self.lbls]
-
-        self.lbls = np.array(self.lbls)
-        self.lbl_dict = {
-            i: np.where(self.lbls == i)[0] for i in range(55)
-        }
-        print('Sizes: ', len(self.lbls), len(self.npy_paths))
-        if 'dataset5' in path:
-            self.subset_count = 5
-            self.lbls_used = [8, 9, 28, 31, 41]
-        elif 'dataset16' in path:
-            self.subset_count = 16
-            self.lbls_used = [1, 5, 10, 25, 27, 29, 35, 36, 37, 38, 40, 42, 46, 48, 52, 54]
+        print('dataset: ', path)
+        if 'datasetOriginal' in path:
+            self.npy_paths = [os.path.join(self.path, npy)
+                              for npy in os.listdir(self.path)]
+            if split != 'train':
+                num_subset = int(.1 * len(self.npy_paths))
+                self.npy_paths = self.npy_paths[:num_subset]
+            self.lbls = None
         else:
-            self.subset_count = -1
-            self.lbls_used = list(range(55))
+            assert self.split in ['train', 'test', 'val']
+            self.path = os.path.join(self.path, self.split)
+            self.subset_percent = None
+
+            self.npy_paths = []
+            self.lbls = []
+            folder_names = os.listdir(self.path)
+            for folder_name in folder_names:
+                npy_names = os.listdir(os.path.join(self.path, folder_name))
+                self.npy_paths += [os.path.join(self.path, folder_name, npy_name)
+                                   for npy_name in npy_names]
+                self.lbls += [lbl_dict[folder_name], ] * len(npy_names)
+
+            if self.split == 'train':
+                lbl_count = defaultdict(int)
+                for lbl in self.lbls:
+                    lbl_count[lbl] += 1
+                weights_per_class = {lbl: 1.*len(self.lbls)/count
+                                     for lbl, count in lbl_count.items()}
+                self.weights_per_index = [weights_per_class[lbl] for lbl in self.lbls]
+
+            self.lbls = np.array(self.lbls)
+            self.lbl_dict = {
+                i: np.where(self.lbls == i)[0] for i in range(55)
+            }
+            # 36717 for the 70/20/10 split and 42013 when combining train and val.
+            print('Sizes: ', len(self.lbls), len(self.npy_paths))
+            if 'dataset5' in path:
+                self.subset_count = 5
+                self.lbls_used = [8, 9, 28, 31, 41]
+            elif 'dataset16' in path:
+                self.subset_count = 16
+                self.lbls_used = [1, 5, 10, 25, 27, 29, 35, 36, 37, 38, 40, 42, 46, 48, 52, 54]
+            else:
+                self.subset_count = -1
+                self.lbls_used = list(range(55))
 
     def __getitem__(self, index):
         sample = np.load(self.npy_paths[index])
         sample = self.pc_preprocess(sample)
+        sample = np.expand_dims(sample, axis=0).repeat(self.num_frames, 0)
 
-        lbl = self.lbls[index]
-
-        sample = np.expand_dims(
-            sample, axis=0).repeat(self.num_frames, 0)
-        if self.use_diff_object:
-            indices = [index]
-            while len(indices) < self.num_frames:
-                temp_index = np.random.choice(self.lbl_dict[lbl])
-                if temp_index not in indices:
-                    sample[len(indices)] = self.pc_preprocess(np.load(self.npy_paths[temp_index]))
-                    indices.append(temp_index)
+        if self.lbls:
+            lbl = self.lbls[index]
+            if self.use_diff_object:
+                indices = [index]
+                while len(indices) < self.num_frames:
+                    temp_index = np.random.choice(self.lbl_dict[lbl])
+                    if temp_index not in indices:
+                        sample[len(indices)] = self.pc_preprocess(np.load(self.npy_paths[temp_index]))
+                        indices.append(temp_index)
 
         # Rotation
         if self.rotation_range is not None:
@@ -192,9 +203,13 @@ class ShapeNet55(torch.utils.data.Dataset):
 
         # Permute so the channels are in the right dim.
         datum = torch.from_numpy(sample).permute(0, 2, 1).float()
-        if self.subset_count > 0:
-            lbl = self.lbls_used.index(lbl)
-        return datum, lbl
+
+        if self.lbls:
+            if self.subset_count > 0:
+                lbl = self.lbls_used.index(lbl)
+            return datum, lbl
+        else:
+            return datum, 0
 
     def pc_preprocess(self, pc):
         # pc = self.total_data[index].copy()
