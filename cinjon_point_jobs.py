@@ -1207,11 +1207,11 @@ def run(find_counter=None):
         'config': [
             'resnet_backbone_points55_smbone3_gap',
         ],
-        'num_routing': [1, 2],
+        'classifier_type': ['presence', 'pose'],
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1253,7 +1253,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1294,7 +1294,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1333,6 +1333,97 @@ def run(find_counter=None):
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 105. Running Zeping's 43 job with modelnet eval.
+    num_gpus = 1
+    time = 24
+    job = {
+        'name': '2020.06.30',
+        'counter': 105,
+        'config': 'pointcapsnet_backbone_points5_cap16',
+        'criterion': 'autoencoder',
+        'num_output_classes': 55,
+        # 'num_routing': 1,
+        'dataset': 'shapenetFull',
+        'num_frames': 1,
+        'batch_size': 8,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'presence_type': 'l2norm',
+        'epoch': 350,
+        # 'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        # 'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'lr': 3e-4,
+        'num_gpus': num_gpus,
+        # 'dynamic_routing': True,
+        'do_svm_shapenet_every': 1,
+        'do_svm_shapenet_after': 5,
+        'linear_batch_size': 16,
+        'shapenet_rotation_train': '',
+        'weight_decay': 0,
+        'resume_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet/2020.06.28/43/2020-06-28-10-40-49',
+        'resume_epoch': 12,
+        'classifier_type': 'pose'
+    }
+    # We just want to run 105 and 108. Uh ... maybe just 108
+    var_arrays = {
+        'linpred_test_only': [True, False],
+        'linpred_svm_only': [False, True]
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 109. This is duplicating counters 52-55 but on sahapenetFullMix.
+    job = {
+        'name': '2020.07.01',
+        'config': 'resnet_backbone_points16_smbone3_gap',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFullMix',
+        'batch_size': 18,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1,
+        'do_modelnet_test_after': 500,
+        'lr': 3e-4
+    }
+    num_gpus = 2
+    time = 24
+    var_arrays = {
+        'config': ['resnet_backbone_points16_smbone3_gap',
+                   'resnet_backbone_points16_smbone4_gap'],
+        'nce_presence_temperature': [0.1, 0.03]
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
