@@ -755,6 +755,9 @@ def main(gpu, args, port=12355, initialize=True):
         return
 
     if args.linpred_svm_only:
+        print('\n***\nStarting LinPred SVM on Modelnet (%d)\n***' % start_epoch)
+        linpred_train.run_svm_modelnet(start_epoch, net, args, config, comet_exp)
+        print('\n***\nEnded LinPred SVM on Modelnet (%d)\n***' % start_epoch)
         print('\n***\nStarting LinPred SVM on ShapeNet (%d)\n***' % start_epoch)
         linpred_train.run_svm_shapenet(start_epoch, net, args, config, comet_exp)
         print('\n***\nEnded LinPred SVM on ShapeNet (%d)\n***' % start_epoch)
@@ -1076,9 +1079,9 @@ if __name__ == '__main__':
             args.resume_epoch = 42
             args.classifier_type = 'pose'
         elif args.counter == 55:
-            args.linpred_test_only = True
-            args.linpred_test_class_balanced = True
-            # args.linpred_svm_only = True
+            # args.linpred_test_only = True
+            # args.linpred_test_class_balanced = True
+            args.linpred_svm_only = True
             args.num_gpus = 1
             base_dir = '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet'
             args.resume_dir = os.path.join(
