@@ -700,7 +700,7 @@ def run(find_counter=None):
 
         return find_counter, job
 
-    # 43: 3D point capsules network
+    # 43-48: 3D point capsules network
     if find_counter in [43, 44, 45, 46, 47, 48]:
         num_gpus = 1
         time = 24
@@ -771,7 +771,66 @@ def run(find_counter=None):
                 'lr': 1e-4
             })
 
+        return find_counter, job
 
+    # 49-50: 3D point capsules network with datasetFullMix and datasetFullOriginal
+    if find_counter in [49, 50, 51, 52]:
+        num_gpus = 1
+        time = 24
+        job = {
+            'name': '2020.06.30',
+            'counter': find_counter,
+            'config': 'pointcapsnet_backbone_points5_cap16',
+            'criterion': 'autoencoder',
+            'num_output_classes': 55,
+            # 'dataset': 'shapenetFull',
+            'num_frames': 1,
+            'batch_size': 8,
+            'optimizer': 'adam',
+            'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet',
+            'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+            'do_tsne_test_every': 5,
+            'do_tsne_test_after': -1,
+            'presence_type': 'l2norm',
+            'epoch': 350,
+            'shapenet_stepsize_range': '0,0',
+            'shapenet_rotation_train': '',
+            'shapenet_rotation_test': '',
+            'use_scheduler': True,
+            'schedule_milestones': '10,30',
+            'lr': 3e-4,
+            'weight_decay': 0,
+            'num_gpus': num_gpus,
+            'do_svm_shapenet_every': 1,
+            'do_svm_shapenet_after': 5,
+            'linear_batch_size': 16,
+        }
+
+        if find_counter == 49:
+            job.update({
+                'lr': 1e-4,
+                'dataset': 'shapenetFullMix'
+            })
+
+        if find_counter == 50:
+            job.update({
+                'lr': 3e-4,
+                'dataset': 'shapenetFullMix'
+            })
+
+        if find_counter == 51:
+            job.update({
+                'lr': 1e-4,
+                'dataset': 'shapenetOriginal',
+                'do_svm_shapenet_after': 300
+            })
+
+        if find_counter == 52:
+            job.update({
+                'lr': 3e-4,
+                'dataset': 'shapenetOriginal',
+                'do_svm_shapenet_after': 300
+            })
 
         return find_counter, job
 

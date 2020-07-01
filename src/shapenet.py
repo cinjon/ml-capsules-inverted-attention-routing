@@ -155,7 +155,7 @@ class ShapeNet55(torch.utils.data.Dataset):
         sample = self.pc_preprocess(sample)
         sample = np.expand_dims(sample, axis=0).repeat(self.num_frames, 0)
 
-        if self.lbls:
+        if self.lbls is not None and len(self.lbls) > 0:
             lbl = self.lbls[index]
             if self.use_diff_object:
                 indices = [index]
@@ -204,7 +204,7 @@ class ShapeNet55(torch.utils.data.Dataset):
         # Permute so the channels are in the right dim.
         datum = torch.from_numpy(sample).permute(0, 2, 1).float()
 
-        if self.lbls:
+        if self.lbls is not None and len(self.lbls) > 0:
             if self.subset_count > 0:
                 lbl = self.lbls_used.index(lbl)
             return datum, lbl

@@ -580,10 +580,10 @@ def test(epoch, step, net, loader, args, device, store_dir=None, comet_exp=None)
             elif criterion == 'autoencoder':
                 points = points[:, 0]
                 points = points.cuda(device)
-                labels = labels.squeeze()
-                labels = labels.cuda(device)
+                # labels = labels.squeeze()
+                # labels = labels.cuda(device)
                 loss, stats = capsule_ae.get_autoencoder_loss(
-                    net, points, labels, args)
+                    net, points, args)
                 averages['loss'].add(loss.item())
                 for key, value in stats.items():
                     if key not in averages:
