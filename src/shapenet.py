@@ -109,6 +109,7 @@ class ShapeNet55(torch.utils.data.Dataset):
             self.npy_paths = [os.path.join(self.path, npy)
                               for npy in os.listdir(self.path)]
             if split != 'train':
+                # This is because it's a big dataset jsut using train.
                 num_subset = int(.1 * len(self.npy_paths))
                 self.npy_paths = self.npy_paths[:num_subset]
             self.lbls = None

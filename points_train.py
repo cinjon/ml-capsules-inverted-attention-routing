@@ -328,7 +328,6 @@ def get_loaders(args, rank=0, is_tsne=False):
             stepsize_fixed=stepsize_fixed, stepsize_range=stepsize_range,
             use_diff_object=args.use_diff_object,
             rotation_range=rotation_train, rotation_same=rotation_same)
-        # NOTE: We changed this to train to test some shit.
         test_set = ShapeNet55(
             root, split='val', # 'train'
             num_frames=args.num_frames,

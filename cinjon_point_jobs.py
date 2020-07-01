@@ -1423,7 +1423,95 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 113. This is doing linpred on Zeping's [49,52]
+    num_gpus = 1
+    time = 24
+    job = {
+        'name': '2020.07.01',
+        'config': 'pointcapsnet_backbone_points5_cap16',
+        'criterion': 'autoencoder',
+        'num_output_classes': 55,
+        'num_frames': 1,
+        'batch_size': 8,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'presence_type': 'l2norm',
+        'epoch': 350,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'lr': 3e-4,
+        'weight_decay': 0,
+        'num_gpus': num_gpus,
+        'do_svm_shapenet_every': 1,
+        'do_svm_shapenet_after': 5,
+        'linear_batch_size': 16,
+        'classifier_type': 'pose',
+        'linpred_svm_only': True,
+        'resume_epoch': 6,
+    }
+    var_arrays = {
+        'resume_dir': [
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet/2020.06.30/49/2020-06-30-21-42-11',
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet/2020.06.30/50/2020-06-30-21-42-06',
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet/2020.06.30/51/2020-06-30-21-45-57',
+            '/misc/kcgscratch1/ChoGroup/resnick/spaceofmotion/zeping/capsules/results/shapenet/2020.06.30/52/2020-06-30-21-42-11'
+        ]
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
         find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+
+    # Counter: 117. This is duplicating counters 52-55 but on sahapenetFullComplete.
+    job = {
+        'name': '2020.07.01',
+        'config': 'resnet_backbone_points16_smbone3_gap',
+        'criterion': 'nceprobs_selective',
+        'num_output_classes': 55,
+        'num_routing': 1,
+        'dataset': 'shapenetFullComplete',
+        'batch_size': 18,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'epoch': 350,
+        'use_diff_object': True,
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': '',
+        'use_scheduler': True,
+        'nce_presence_temperature': 0.1,
+        'do_modelnet_test_after': 500,
+        'lr': 3e-4
+    }
+    num_gpus = 1
+    time = 24
+    var_arrays = {
+        'config': ['resnet_backbone_points16_smbone3_gap',
+                   'resnet_backbone_points16_smbone4_gap'],
+        'nce_presence_temperature': [0.1, 0.03]
+    }
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
