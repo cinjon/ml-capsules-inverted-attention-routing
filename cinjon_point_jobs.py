@@ -1470,7 +1470,7 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=True)
+        find_counter=find_counter, do_job=False)
     if find_counter and _job:
         return counter, _job
 
@@ -1502,8 +1502,8 @@ def run(find_counter=None):
         'do_modelnet_test_after': 500,
         'lr': 3e-4
     }
-    num_gpus = 1
-    time = 24
+    num_gpus = 2
+    time = 36
     var_arrays = {
         'config': ['resnet_backbone_points16_smbone3_gap',
                    'resnet_backbone_points16_smbone4_gap'],
@@ -1511,10 +1511,87 @@ def run(find_counter=None):
     }
     counter, _job = do_jobarray(
         email, code_directory, num_gpus, counter, job, var_arrays, time,
-        find_counter=find_counter, do_job=False)
+        find_counter=find_counter, do_job=True)
     if find_counter and _job:
         return counter, _job
 
+
+    # Counter: 121. Params = 2155264. These do not have dynamic routing.
+    job = {
+        'name': '2020.07.01',
+        'config': 'pointcapsnet_backbone_points5_cap16',
+        'criterion': 'backbone_nceprobs_selective',
+        'num_output_classes': 55,
+        'lr': 1e-4,
+        'num_frames': 2,
+        'dataset': 'shapenetFullComplete',
+        'batch_size': 8,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'nce_presence_lambda': 1.0,
+        'epoch': 350,
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'use_diff_object': True,
+        'linear_batch_size': 16,
+        'classifier_type': 'pose',
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': ''
+    }
+    num_gpus = 1
+    time = 10
+    var_arrays = {'nce_presence_temperature': [0.1, 0.03]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=True)
+    if find_counter and _job:
+        return counter, _job
+
+    # Counter: 123. Params = 69264128. These DO have dynamic routing.
+    job = {
+        'name': '2020.07.01',
+        'config': 'pointcapsnet_backbone_points5_cap16',
+        'criterion': 'backbone_nceprobs_selective',
+        'num_output_classes': 55,
+        'lr': 1e-4,
+        'num_frames': 2,
+        'dataset': 'shapenetFullComplete',
+        'batch_size': 6,
+        'dynamic_routing': True,
+        'optimizer': 'adam',
+        'results_dir': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/results/shapenet',
+        'data_root': '/misc/kcgscratch1/ChoGroup/resnick/vidcaps/shapenet',
+        'do_tsne_test_every': 5,
+        'do_tsne_test_after': -1,
+        'weight_decay': 0,
+        'presence_type': 'l2norm',
+        'simclr_selection_strategy': 'anchor0_other12',
+        'nce_presence_lambda': 1.0,
+        'epoch': 350,
+        'use_scheduler': True,
+        'schedule_milestones': '10,30',
+        'use_diff_object': True,
+        'linear_batch_size': 16,
+        'classifier_type': 'pose',
+        'shapenet_stepsize_range': '0,0',
+        'shapenet_rotation_train': '',
+        'shapenet_rotation_test': ''
+    }
+    num_gpus = 2
+    time = 10
+    var_arrays = {'nce_presence_temperature': [0.1, 0.03]}
+    counter, _job = do_jobarray(
+        email, code_directory, num_gpus, counter, job, var_arrays, time,
+        find_counter=find_counter, do_job=False)
+    if find_counter and _job:
+        return counter, _job
 
 if __name__ == '__main__':
     run()
