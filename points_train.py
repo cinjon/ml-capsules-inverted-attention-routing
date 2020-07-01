@@ -55,6 +55,9 @@ def run_tsne(model, path, epoch, args, comet_exp, num_classes):
             if split == 'test' and test_loader.dataset.split == 'train':
                 continue
 
+            if split == 'train' and args.dataset == 'shapenetFullComplete':
+                continue
+
             # if split == 'train':
             #     continue
 
