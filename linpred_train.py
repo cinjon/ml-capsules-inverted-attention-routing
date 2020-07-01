@@ -27,8 +27,9 @@ import torchvision
 import torchvision.transforms as transforms
 
 import configs
-from src import capsule_time_model
+from src import capsule_ae
 from src import capsule_points_model
+from src import capsule_time_model
 from src.moving_mnist.moving_mnist2 import MovingMNIST as MovingMNist2
 from src.affnist import AffNist
 from src.shapenet import ShapeNet55
@@ -275,8 +276,11 @@ def run_ssl_shapenet(ssl_epoch, model, args, config, comet_exp=None):
         dataset=test_set, batch_size=batch_size, shuffle=True,
         num_workers=args.num_workers)
 
-    net = capsule_points_model.CapsulePointsModel(
-        config['params'], args, linear_classifier_out=args.num_output_classes)
+    if args.criterion == 'autoencoder':
+        net = capsule_ae.PointCapsNet(config['params'], args)
+    else:
+        net = capsule_points_model.CapsulePointsModel(
+            config['params'], args, linear_classifier_out=args.num_output_classes)
 
     optimizer = optim.Adam(net.parameters(), lr=1e-2, weight_decay=5e-4)
     net.to('cuda')
@@ -500,7 +504,6 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                         new_t - t, new_t - start_t
                     ))
                     t = new_t
-                    # break
 
     train_poses = np.concatenate(pose_d['train'])
     train_presences = np.concatenate(presence_d['train'])
@@ -516,11 +519,17 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
 
     start_t = time.time()
     t = start_t
+    best_score = 0
+    best_stats = {}
+    
     for key, train_data, test_data in zip(
-            ['pose', 'presence'],
+            ['shapenet/pose', 'shapenet/presence'],
             [[train_poses, train_labels], [train_presences, train_labels]],
             [[test_poses, test_labels], [test_presences, test_labels]]
     ):
+        if 'presence' in key:
+            continue
+
         train_x, train_y = train_data
         test_x, test_y = test_data
 
@@ -534,17 +543,211 @@ def run_svm_shapenet(ssl_epoch, model, args, config, comet_exp=None):
                     clf = LinearSVC(random_state=0, tol=1e-5, C=C,
                                     class_weight=class_weight, dual=False)
                     clf.fit(train_x, train_y)
-                    # predictions = clf.predict(test_x)
-                    score = clf.score(test_x, test_y)
+                    predictions = clf.predict(test_x)
+                    counts_per_class = defaultdict(int)
+                    tp_per_class = defaultdict(int)
+                    fp_per_class = defaultdict(int)
+                    for gt, pred in zip(test_y, predictions):
+                        counts_per_class[gt] += 1
+                        if pred == gt:
+                            tp_per_class[pred] += 1
+                        else:
+                            fp_per_class[pred] += 1
+                    total = sum(counts_per_class.values())
+                    correct = sum(tp_per_class.values())
+                    score = 1.0 * correct / total
+                    score_verify = clf.score(test_x, test_y)
+
+                    if score > best_score:
+                        best_score = score
+                        stats = {
+                            'scaled': int(scaling_params), 'key': key,
+                            'C': C, 'is_balanced': int(class_weight == 'balanced'),
+                            'score': score, 'score_verify': score_verify
+                        }
+                        for class_, total_count in counts_per_class.items():
+                            tp_count = tp_per_class.get(class_, 0)
+                            fp_count = fp_per_class.get(class_, 0)
+                            recall = tp_count / total_count
+                            if tp_count == 0 and fp_count == 0:
+                                precision = 0
+                            else:
+                                precision = tp_count / (tp_count + fp_count)
+                            stats['precision/%02d' % class_] = precision
+                            stats['recall/%02d' % class_] = recall
+                        best_stats = stats
+
                     s = '%s/scaled%d/C%d/balanced%d/dual0' % (
                         key, int(scaling_params), C, int(class_weight == 'balanced')
                     )
-                    s = 'For key %s, score of %.4f.' % (s, score)
+                    s = 'For key %s, score of %.4f (verify: %.4f).' % (s, score, score_verify)
                     now = time.time()
                     s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
                     t = now
                     print(s)
-                    comet_exp.log_metrics({key: score})
+
+    print('Best Shapenet: ', best_stats)
+    other_stats = {'shapenet-%s' % k:v for k,v in best_stats.items() if k in ['scaled', 'C', 'key', 'is_balanced']}
+    metric_stats = {'shapenet-%s' % k: v for k, v in best_stats.items() \
+                    if 'precision' in k or 'recall' in k or k == 'score'}
+    for k, v in other_stats.items():
+        comet_exp.log_other(k, v)
+    comet_exp.log_metrics(metric_stats, step=ssl_epoch)
+
+
+
+def run_svm_modelnet(ssl_epoch, model, args, config, comet_exp=None):
+    train_set = ModelNet(args.modelnet_root, train=True)
+    test_set = ModelNet(args.modelnet_root, train=False)
+
+    batch_size = args.linear_batch_size
+    if args.linpred_test_class_balanced:
+        sampler = torch.utils.data.sampler.WeightedRandomSampler(
+            train_set.weights_per_index, batch_size)
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size,
+            sampler=sampler, num_workers=args.num_workers)
+    else:
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=batch_size, shuffle=True,
+            num_workers=args.num_workers
+        )
+
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_set,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=args.num_workers)
+
+    all_params = sum(p.numel() for p in model.parameters())
+    print('All Params %d' % (all_params))
+
+    device = 'cuda'
+    model.to(device)
+    model.eval()
+
+    pose_d = defaultdict(list)
+    presence_d = defaultdict(list)
+    labels_d = defaultdict(list)
+    start_t = time.time()
+    t = start_t
+    print('Gathering data...')
+    with torch.no_grad():
+        for split, loader in zip(['train', 'test'], [train_loader, test_loader]):
+            for batch_idx, (points, labels) in enumerate(loader):
+                points = points.to(device)
+                batch_size, num_points = points.shape[:2]
+                # Change view so that we can put everything through the model at once.
+                points = points.view(batch_size * num_points, *points.shape[2:])
+                if args.criterion == 'autoencoder':
+                    pose, presence = model(points, get_code=True)
+                else:
+                    pose, presence = model(points)
+                labels = labels.squeeze()
+                pose = pose.reshape(batch_size*num_points, -1)
+
+                pose = pose.cpu()
+                presence = presence.cpu()
+                labels = labels.cpu()
+                pose_d[split].append(pose)
+                presence_d[split].append(presence)
+                labels_d[split].append(labels)
+                if batch_idx % 10 == 0:
+                    new_t = time.time()
+                    print('Did batch %d / %d (%d / %d), %.4f / %.4f' % (
+                        batch_idx, len(loader), len(pose), len(pose_d[split]),
+                        new_t - t, new_t - start_t
+                    ))
+                    t = new_t
+
+    train_poses = np.concatenate(pose_d['train'])
+    train_presences = np.concatenate(presence_d['train'])
+    train_labels = np.concatenate(labels_d['train'])
+    test_poses = np.concatenate(pose_d['test'])
+    test_presences = np.concatenate(presence_d['test'])
+    test_labels = np.concatenate(labels_d['test'])
+    print('Got test data: ', test_labels.shape, test_presences.shape, test_poses.shape)
+    print('Got train data: ', train_labels.shape, train_presences.shape, train_poses.shape)
+    del labels_d
+    del presence_d
+    del pose_d
+
+    start_t = time.time()
+    t = start_t
+    best_score = 0
+    best_stats = {}
+
+    for key, train_data, test_data in zip(
+            ['modelnet/pose', 'modelnet/presence'],
+            [[train_poses, train_labels], [train_presences, train_labels]],
+            [[test_poses, test_labels], [test_presences, test_labels]]
+    ):
+        if 'presence' in key:
+            continue
+
+        train_x, train_y = train_data
+        test_x, test_y = test_data
+
+        for scaling_params in [False, True]:
+            if scaling_params:
+                # We scale each example in both train and test to be unit norm.
+                test_x = test_x / np.linalg.norm(test_x, axis=1)[:, None]
+                train_x = train_x / np.linalg.norm(train_x, axis=1)[:, None]
+            for C in [1., 0.5, 2]:
+                for class_weight in [None, 'balanced']:
+                    clf = LinearSVC(random_state=0, tol=1e-5, C=C,
+                                    class_weight=class_weight, dual=False)
+                    clf.fit(train_x, train_y)
+                    predictions = clf.predict(test_x)
+                    counts_per_class = defaultdict(int)
+                    tp_per_class = defaultdict(int)
+                    fp_per_class = defaultdict(int)
+                    for gt, pred in zip(test_y, predictions):
+                        counts_per_class[gt] += 1
+                        if pred == gt:
+                            tp_per_class[pred] += 1
+                        else:
+                            fp_per_class[pred] += 1
+                    total = sum(counts_per_class.values())
+                    correct = sum(tp_per_class.values())
+                    score = 1.0 * correct / total
+                    score_verify = clf.score(test_x, test_y)
+
+                    if score > best_score:
+                        best_score = score
+                        stats = {
+                            'scaled': int(scaling_params), 'key': key,
+                            'C': C, 'is_balanced': int(class_weight == 'balanced'),
+                            'score': score, 'score_verify': score_verify
+                        }
+                        for class_, total_count in counts_per_class.items():
+                            tp_count = tp_per_class.get(class_, 0)
+                            fp_count = fp_per_class.get(class_, 0)
+                            recall = tp_count / total_count
+                            if tp_count == 0 and fp_count == 0:
+                                precision = 0
+                            else:
+                                precision = tp_count / (tp_count + fp_count)
+                            stats['precision/%02d' % class_] = precision
+                            stats['recall/%02d' % class_] = recall
+                        best_stats = stats
+
+                    s = '%s/scaled%d/C%d/balanced%d/dual0' % (
+                        key, int(scaling_params), C, int(class_weight == 'balanced')
+                    )
+                    s = 'For key %s, score of %.4f (verify: %.4f).' % (s, score, score_verify)
+                    now = time.time()
+                    s += '\nTime: %.4f / %.4f overall.' % (now - t, now - start_t)
+                    t = now
+                    print(s)
+
+    print('Best Modelnet: ', best_stats)
+    other_stats = {'modelnet-%s' % k:v for k,v in best_stats.items() if k in ['scaled', 'C', 'key', 'is_balanced']}
+    metric_stats = {'modelnet-%s' % k: v for k, v in best_stats.items() \
+                    if 'precision' in k or 'recall' in k}
+    for k, v in other_stats.items():
+        comet_exp.log_other(k, v)
+    comet_exp.log_metrics(metric_stats, step=ssl_epoch)
 
 
 def get_mnist_loss(model, images, labels):
