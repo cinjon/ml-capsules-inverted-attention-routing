@@ -773,8 +773,8 @@ def run(find_counter=None):
 
         return find_counter, job
 
-    # 49-50: 3D point capsules network with datasetFullMix and datasetFullOriginal
-    if find_counter in [49, 50, 51, 52]:
+    # 49-54: 3D point capsules network with datasetFullMix, datasetFullOriginal and datasetFullComplete
+    if find_counter in [49, 50, 51, 52, 53, 54]:
         num_gpus = 1
         time = 24
         job = {
@@ -829,6 +829,20 @@ def run(find_counter=None):
             job.update({
                 'lr': 3e-4,
                 'dataset': 'shapenetOriginal',
+                'do_svm_shapenet_after': 300
+            })
+
+        if find_counter == 53:
+            job.update({
+                'lr': 1e-4,
+                'dataset': 'shapenetFullComplete',
+                'do_svm_shapenet_after': 300
+            })
+
+        if find_counter == 54:
+            job.update({
+                'lr': 3e-4,
+                'dataset': 'shapenetFullComplete',
                 'do_svm_shapenet_after': 300
             })
 
